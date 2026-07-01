@@ -1,0 +1,14 @@
+name = "novamind-ai"
+main = "worker.js"
+compatibility_date = "2024-09-23"
+
+# Set secrets via: wrangler secret put SECRET_KEY
+#                  wrangler secret put APP_PASSWORD
+#                  wrangler secret put INCIDENT_KEY
+[vars]
+APP_USERNAME = "admin"
+
+[[kv_namespaces]]
+binding = "INCIDENT_KV"
+id = "REPLACE_WITH_YOUR_KV_NAMESPACE_ID"
+preview_id = "REPLACE_WITH_YOUR_PREVIEW_KV_NAMESPACE_ID"
