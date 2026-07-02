@@ -29,7 +29,7 @@ Doubles as the live attack target for the **ThreatOps CTF** ("Drop-Day Bot Swarm
 
 ## Deploy
 
-### 1. Install Wrangler
+### 1. Installing Wrangler
 
 ```bash
 npm install
