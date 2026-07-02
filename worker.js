@@ -1,28 +1,61 @@
 /**
- * NovaMind AI — Cloudflare Worker
- * Replaces the Flask app. State stored in Workers KV.
+ * SoleDrop — Cloudflare Worker
+ * A hyped sneaker-drop storefront. State stored in Workers KV.
  * Sessions: HMAC-SHA256 signed cookies (no server-side session store needed).
+ *
+ * Doubles as the live attack target for the ThreatOps CTF ("Drop-Day Bot Swarm"):
+ * the attack simulator fires real HTTP traffic at these paths and flips the
+ * /status page into incident mode via POST /api/incident.
  */
 
-// ── Mock AI responses ────────────────────────────────────────────────────────
+// ── Mock support-concierge responses ──────────────────────────────────────────
 
 const MOCK_RESPONSES = [
-  "I can help you build and deploy enterprise AI models at scale. Our ModelForge platform supports fine-tuning on proprietary datasets with full data isolation. Would you like to see a demo?",
-  "NovaMind Chat API supports streaming responses, function calling, and context windows up to 200K tokens. Our enterprise tier includes SLA guarantees and dedicated inference capacity.",
-  "Great question! Our DataVault platform provides end-to-end encryption for training data with SOC 2 Type II compliance. Data never leaves your VPC unless you explicitly configure cross-region replication.",
-  "NovaMind Autopilot can orchestrate multi-step AI workflows across your existing tools. It integrates with Slack, Salesforce, Jira, and 200+ enterprise applications out of the box.",
-  "Our model inference API averages sub-100ms p50 latency globally, backed by our distributed edge inference network. We currently operate in 18 regions with automatic failover.",
-  "I'm NovaMind AI, your enterprise assistant. I can answer questions about our platform, help you understand pricing tiers, or connect you with our solutions engineering team.",
-  "For compliance-sensitive deployments, we offer NovaMind Private Cloud — a fully isolated deployment on your infrastructure or dedicated cloud tenancy. HIPAA BAA and FedRAMP High authorization available.",
-  "Our vector search and RAG pipeline capabilities allow you to ground model responses in your proprietary knowledge bases. Latency overhead for RAG is typically under 20ms per query.",
-  "NovaMind supports OpenAI-compatible API endpoints, so migration from existing providers requires minimal code changes — usually just swapping the base URL and API key.",
-  "The ModelForge fine-tuning platform supports LoRA, QLoRA, and full-parameter fine-tuning. Training runs are isolated per tenant and audit logs are retained for 90 days by default.",
-  "Our enterprise plan includes 99.99% uptime SLA, priority support with 15-minute response times, and a dedicated customer success manager. Annual contracts also include on-site training.",
-  "I can help generate synthetic training data, analyze dataset quality, run bias evaluations, and recommend augmentation strategies to improve your model's performance on edge cases.",
-  "NovaMind's API gateway supports rate limiting, quota management, and per-key usage analytics. You can create scoped API keys with read-only or specific endpoint permissions.",
-  "For multi-tenant SaaS applications, we recommend our Namespace Isolation feature which provides cryptographically separate model contexts per end-user — preventing cross-tenant data leakage.",
-  "Our security team publishes quarterly transparency reports and we participate in HackerOne's bug bounty program. Current CVSS scores for open findings are all below 4.0.",
+  "Thanks for reaching out to SoleDrop! The next drop is this Saturday at 11:00 AM ET. Add the release to your notifications and we'll ping you 15 minutes before it goes live.",
+  "All SoleDrop pairs are 100% authentic and pass a multi-point verification before they ship. Every order includes a SoleDrop authenticity tag with a scannable QR code.",
+  "Raffle entries are free — one entry per verified account. Winners are drawn 24 hours before the drop and charged automatically if a card is on file. Good luck!",
+  "Standard shipping is 3–5 business days and free on orders over $150. Express (1–2 days) is available at checkout. You'll get a tracking link the moment your pair leaves the warehouse.",
+  "Sizing runs true to size on most models. The Volt Runner OG and Apex Trail 2 run about a half size large — we'd suggest going down half a size for those two.",
+  "Returns are accepted within 14 days on unworn pairs with the original box and tags. Raffle-win pairs are final sale. Start a return from your account dashboard under Orders.",
+  "If a pair sold out, hit 'Notify Me' on the product — we release restock pairs from cancelled orders every Tuesday, and notified members get first access.",
+  "We ship worldwide! International duties are calculated at checkout so there are no surprise fees on delivery. Delivery is typically 7–12 business days outside the US.",
+  "Your saved payment methods and addresses live in your account settings. We never store full card numbers — payments are tokenized through our PCI-compliant processor.",
+  "During a drop, checkout can get busy — if you hit the waiting room, don't refresh! Your place in line is held automatically and you'll be let through in order.",
+  "SoleDrop members earn 'Heat Points' on every purchase that unlock early access to future drops. You're currently building toward Early Access tier — nice.",
+  "We take bots seriously. One pair per customer per drop, verified accounts only, and our edge protection blocks automated checkout attempts to keep drops fair for real people.",
+  "Cancelled an order by mistake? Reach out within 30 minutes and we can usually reinstate it if the pair hasn't been released back to the pool yet.",
+  "The Grail High 'Panda' is one of our most-wanted pairs — it's raffle-only this drop. Enter the raffle from the product page before Friday 5 PM ET to be in the draw.",
+  "Need help with an order? Share your order number (starts with SD-) and I can pull up the status, tracking, and estimated delivery for you right here.",
 ];
+
+// ── Product catalog ────────────────────────────────────────────────────────────
+
+const PRODUCTS = [
+  { id: 'volt-runner-og',  name: 'Volt Runner OG',   colorway: 'Solar Flare',   price: 220, c1: '#ff6a00', c2: '#ff2d55', badge: 'JUST DROPPED', state: 'shop' },
+  { id: 'apex-trail-2',    name: 'Apex Trail 2',      colorway: 'Midnight Navy', price: 180, c1: '#1a5cff', c2: '#00d4ff', badge: '',            state: 'shop' },
+  { id: 'cinder-low',      name: 'Cinder Low',        colorway: 'Ember Red',     price: 160, c1: '#e5342b', c2: '#ff8a00', badge: 'RAFFLE',      state: 'raffle' },
+  { id: 'grail-high',      name: 'Grail High',        colorway: 'Panda',         price: 250, c1: '#141210', c2: '#8a8a8a', badge: 'RAFFLE',      state: 'raffle' },
+  { id: 'pulse-knit',      name: 'Pulse Knit',        colorway: 'Lime Shock',    price: 150, c1: '#9ef01a', c2: '#00c46a', badge: 'LOW STOCK',   state: 'shop' },
+  { id: 'drift-mesh',      name: 'Drift Mesh',        colorway: 'Arctic Blue',   price: 140, c1: '#00b4d8', c2: '#7cf5ff', badge: '',            state: 'shop' },
+  { id: 'nova-court-97',   name: "Nova Court '97",    colorway: 'Cream / Gold',  price: 200, c1: '#e0b978', c2: '#fff3d6', badge: 'SOLD OUT',    state: 'soldout' },
+  { id: 'vault-23-retro',  name: 'Vault 23 Retro',    colorway: 'Royal',         price: 210, c1: '#2536ff', c2: '#6a5cff', badge: 'SOLD OUT',    state: 'soldout' },
+];
+
+// SVG sneaker silhouette, tinted per product.
+function sneakerSVG(c1, c2, key) {
+  const g = `grad-${key}`;
+  return `<svg viewBox="0 0 200 120" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" aria-hidden="true">
+    <defs><linearGradient id="${g}" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="${c1}"/><stop offset="1" stop-color="${c2}"/>
+    </linearGradient></defs>
+    <path d="M12 78 C12 70 20 66 30 66 L58 66 C70 66 80 60 92 52 C104 44 120 40 138 44 C160 49 176 58 186 68 C192 74 190 84 180 86 L34 90 C20 92 12 88 12 78 Z"
+      fill="url(#${g})" stroke="rgba(0,0,0,0.22)" stroke-width="2"/>
+    <path d="M16 84 L184 80 C186 88 180 94 168 94 L30 96 C20 96 15 91 16 84 Z" fill="rgba(255,255,255,0.85)"/>
+    <path d="M96 54 C104 60 116 62 128 60" fill="none" stroke="rgba(255,255,255,0.55)" stroke-width="3" stroke-linecap="round"/>
+    <path d="M108 48 C116 54 128 56 140 54" fill="none" stroke="rgba(255,255,255,0.4)" stroke-width="3" stroke-linecap="round"/>
+    <circle cx="150" cy="60" r="4" fill="rgba(255,255,255,0.7)"/>
+  </svg>`;
+}
 
 // ── Utilities ────────────────────────────────────────────────────────────────
 
@@ -55,7 +88,7 @@ function redirect(location, status = 302) {
 
 // ── Session helpers ──────────────────────────────────────────────────────────
 
-const SESSION_COOKIE = 'nm_sess';
+const SESSION_COOKIE = 'sd_sess';
 const SESSION_MAX_AGE = 8 * 3600; // 8 hours
 
 async function hmacSign(message, secret) {
@@ -120,71 +153,89 @@ async function setIncident(env, state) {
   await env.INCIDENT_KV.put('incident', JSON.stringify(state));
 }
 
-// ── Shared CSS (base layout) ──────────────────────────────────────────────────
+// ── Shared CSS (bright streetwear theme) ───────────────────────────────────────
 
 const BASE_CSS = `
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --navy:#080f1e; --navy2:#0d1a2e; --navy3:#0f2040;
-    --blue:#2563eb; --blue-lt:#3b82f6; --purple:#7c3aed; --purple-lt:#a78bfa;
-    --green:#10b981; --yellow:#f59e0b; --red:#ef4444;
-    --text:#e2e8f0; --text-muted:#94a3b8;
-    --border:rgba(255,255,255,0.08); --glass:rgba(255,255,255,0.04);
+    --bg:#faf6ee; --bg2:#ffffff; --panel:#ffffff;
+    --ink:#151210; --ink2:#3a352f; --muted:#6f675d;
+    --accent:#ff4d17; --accent-dk:#e23c0a; --blue:#1a5cff; --lime:#8fdd00; --hot:#ff2d78;
+    --good:#12a150; --warn:#e08a00; --bad:#e5342b;
+    --line:rgba(21,18,16,0.12); --line-soft:rgba(21,18,16,0.07);
+    --shadow:0 10px 30px rgba(21,18,16,0.08); --shadow-sm:0 3px 12px rgba(21,18,16,0.07);
   }
-  body { background:var(--navy); color:var(--text); font-family:'Inter',sans-serif; font-size:15px; line-height:1.6; min-height:100vh; }
-  a { color:var(--blue-lt); text-decoration:none; }
-  a:hover { color:#fff; }
-  nav { position:sticky; top:0; z-index:100; background:rgba(8,15,30,0.92); backdrop-filter:blur(12px); border-bottom:1px solid var(--border); }
-  .nav-inner { max-width:1200px; margin:0 auto; display:flex; align-items:center; gap:2rem; padding:0 1.5rem; height:60px; }
-  .nav-logo { display:flex; align-items:center; gap:0.6rem; font-weight:700; font-size:1.05rem; color:#fff; text-decoration:none; }
-  .nav-logo-icon { width:30px; height:30px; background:linear-gradient(135deg,var(--blue) 0%,var(--purple) 100%); border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:0.75rem; font-weight:800; color:#fff; }
-  .nav-links { display:flex; gap:1.5rem; align-items:center; margin-left:auto; }
-  .nav-links a { color:var(--text-muted); font-size:0.875rem; font-weight:500; }
-  .nav-links a:hover { color:#fff; }
-  .nav-cta { background:var(--blue); color:#fff !important; padding:0.4rem 1rem; border-radius:6px; font-size:0.8rem !important; font-weight:600 !important; }
-  .nav-cta:hover { background:var(--blue-lt); }
-  .incident-banner { background:linear-gradient(90deg,#7f1d1d,#991b1b); border-bottom:1px solid #b91c1c; padding:0.5rem 1.5rem; text-align:center; font-size:0.825rem; font-weight:500; color:#fecaca; display:flex; align-items:center; justify-content:center; gap:0.5rem; }
-  .incident-banner .pulse { width:8px; height:8px; border-radius:50%; background:#f87171; flex-shrink:0; animation:pulse-red 1.2s ease-in-out infinite; }
-  @keyframes pulse-red { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(1.4)} }
-  .incident-banner.warning { background:linear-gradient(90deg,#78350f,#92400e); border-color:#b45309; color:#fde68a; }
-  .incident-banner.warning .pulse { background:#fbbf24; }
-  footer { border-top:1px solid var(--border); background:var(--navy2); padding:2.5rem 1.5rem; margin-top:4rem; }
-  .footer-inner { max-width:1200px; margin:0 auto; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; }
-  .footer-brand { font-weight:700; color:#fff; font-size:0.95rem; }
-  .footer-brand span { color:var(--text-muted); font-weight:400; font-size:0.8rem; display:block; margin-top:2px; }
-  .footer-links { display:flex; gap:1.5rem; }
-  .footer-links a { color:var(--text-muted); font-size:0.8rem; }
-  .footer-links a:hover { color:#fff; }
-  .footer-copy { color:var(--text-muted); font-size:0.75rem; }
+  body { background:var(--bg); color:var(--ink); font-family:'Inter',system-ui,sans-serif; font-size:15px; line-height:1.6; min-height:100vh; -webkit-font-smoothing:antialiased; }
+  a { color:var(--ink); text-decoration:none; }
+  a:hover { color:var(--accent); }
   .container { max-width:1200px; margin:0 auto; padding:0 1.5rem; }
-  .badge { display:inline-flex; align-items:center; gap:0.35rem; padding:0.2rem 0.6rem; border-radius:20px; font-size:0.72rem; font-weight:600; }
-  .badge-green  { background:rgba(16,185,129,0.15); color:#34d399; border:1px solid rgba(16,185,129,0.3); }
-  .badge-yellow { background:rgba(245,158,11,0.15); color:#fbbf24; border:1px solid rgba(245,158,11,0.3); }
-  .badge-red    { background:rgba(239,68,68,0.15);  color:#f87171; border:1px solid rgba(239,68,68,0.3); }
-  .badge-blue   { background:rgba(37,99,235,0.15);  color:var(--blue-lt); border:1px solid rgba(37,99,235,0.3); }
-  .badge-purple { background:rgba(124,58,237,0.15); color:var(--purple-lt); border:1px solid rgba(124,58,237,0.3); }
-  .btn { display:inline-flex; align-items:center; justify-content:center; gap:0.4rem; padding:0.6rem 1.4rem; border-radius:8px; font-weight:600; font-size:0.875rem; cursor:pointer; border:none; transition:all 0.15s; font-family:inherit; text-decoration:none; }
-  .btn-primary { background:var(--blue); color:#fff; }
-  .btn-primary:hover { background:var(--blue-lt); color:#fff; }
-  .btn-ghost { background:transparent; color:var(--text); border:1px solid var(--border); }
-  .btn-ghost:hover { background:var(--glass); border-color:rgba(255,255,255,0.15); }
-  .btn-purple { background:var(--purple); color:#fff; }
-  .btn-purple:hover { background:#6d28d9; color:#fff; }
+
+  /* Drop ticker marquee */
+  .ticker { background:var(--ink); color:#fff; font-size:0.74rem; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; overflow:hidden; white-space:nowrap; padding:0.45rem 0; }
+  .ticker span { display:inline-block; padding-left:100%; animation:ticker 22s linear infinite; }
+  .ticker b { color:var(--lime); }
+  @keyframes ticker { 0%{transform:translateX(0)} 100%{transform:translateX(-100%)} }
+
+  nav { position:sticky; top:0; z-index:100; background:rgba(255,255,255,0.9); backdrop-filter:blur(12px); border-bottom:1px solid var(--line); }
+  .nav-inner { max-width:1200px; margin:0 auto; display:flex; align-items:center; gap:2rem; padding:0 1.5rem; height:64px; }
+  .nav-logo { display:flex; align-items:center; gap:0.55rem; font-weight:900; font-size:1.15rem; letter-spacing:-0.02em; color:var(--ink); text-transform:uppercase; }
+  .nav-logo:hover { color:var(--ink); }
+  .nav-logo-icon { width:32px; height:32px; background:var(--ink); border-radius:9px; display:flex; align-items:center; justify-content:center; font-size:1rem; }
+  .nav-logo em { color:var(--accent); font-style:normal; }
+  .nav-links { display:flex; gap:1.5rem; align-items:center; margin-left:auto; }
+  .nav-links a { color:var(--ink2); font-size:0.82rem; font-weight:700; text-transform:uppercase; letter-spacing:0.03em; }
+  .nav-links a:hover { color:var(--accent); }
+  .nav-cta { background:var(--accent); color:#fff !important; padding:0.5rem 1.1rem; border-radius:999px; font-size:0.78rem !important; }
+  .nav-cta:hover { background:var(--accent-dk); }
+
+  .incident-banner { background:linear-gradient(90deg,#e5342b,#ff5a1f); border-bottom:1px solid #b91c1c; padding:0.55rem 1.5rem; text-align:center; font-size:0.83rem; font-weight:600; color:#fff; display:flex; align-items:center; justify-content:center; gap:0.5rem; }
+  .incident-banner a { color:#fff; }
+  .incident-banner .pulse { width:8px; height:8px; border-radius:50%; background:#fff; flex-shrink:0; animation:pulse-red 1.2s ease-in-out infinite; }
+  @keyframes pulse-red { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.4;transform:scale(1.5)} }
+  .incident-banner.warning { background:linear-gradient(90deg,#e08a00,#f5b301); border-color:#b45309; color:#1a1206; }
+  .incident-banner.warning .pulse { background:#1a1206; }
+
+  footer { border-top:1px solid var(--line); background:var(--bg2); padding:2.5rem 1.5rem; margin-top:4rem; }
+  .footer-inner { max-width:1200px; margin:0 auto; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:1rem; }
+  .footer-brand { font-weight:900; color:var(--ink); font-size:1rem; text-transform:uppercase; letter-spacing:-0.01em; }
+  .footer-brand em { color:var(--accent); font-style:normal; }
+  .footer-brand span { color:var(--muted); font-weight:500; font-size:0.78rem; display:block; margin-top:2px; letter-spacing:0; text-transform:none; }
+  .footer-links { display:flex; gap:1.5rem; }
+  .footer-links a { color:var(--muted); font-size:0.8rem; font-weight:600; }
+  .footer-links a:hover { color:var(--accent); }
+  .footer-copy { color:var(--muted); font-size:0.75rem; }
+
+  .badge { display:inline-flex; align-items:center; gap:0.35rem; padding:0.2rem 0.6rem; border-radius:999px; font-size:0.68rem; font-weight:800; letter-spacing:0.04em; text-transform:uppercase; }
+  .badge-green  { background:rgba(18,161,80,0.14); color:#0e7a3d; }
+  .badge-yellow { background:rgba(224,138,0,0.16); color:#a35d00; }
+  .badge-red    { background:rgba(229,52,43,0.14); color:#b91c1c; }
+  .badge-accent { background:rgba(255,77,23,0.14); color:var(--accent-dk); }
+  .badge-ink    { background:var(--ink); color:#fff; }
+
+  .btn { display:inline-flex; align-items:center; justify-content:center; gap:0.4rem; padding:0.7rem 1.5rem; border-radius:999px; font-weight:800; font-size:0.82rem; text-transform:uppercase; letter-spacing:0.03em; cursor:pointer; border:none; transition:all 0.15s; font-family:inherit; text-decoration:none; }
+  .btn-primary { background:var(--ink); color:#fff; }
+  .btn-primary:hover { background:#000; color:#fff; transform:translateY(-1px); }
+  .btn-accent { background:var(--accent); color:#fff; }
+  .btn-accent:hover { background:var(--accent-dk); color:#fff; transform:translateY(-1px); }
+  .btn-ghost { background:transparent; color:var(--ink); border:2px solid var(--ink); }
+  .btn-ghost:hover { background:var(--ink); color:#fff; }
+  .btn:disabled { opacity:0.45; cursor:not-allowed; transform:none; }
   code, .mono { font-family:'JetBrains Mono',monospace; font-size:0.85em; }
 `;
 
 // ── Base layout wrapper ───────────────────────────────────────────────────────
 
-function baseLayout({ title, head = '', body, scripts = '', incident, loggedIn }) {
+function baseLayout({ title, head = '', body, scripts = '', incident, loggedIn, ticker = true }) {
   const banner = incident?.active ? `
     <div class="incident-banner${incident.severity === 'warning' ? ' warning' : ''}">
       <div class="pulse"></div>
       <strong>${esc(incident.title || 'Service Incident')}</strong>${incident.message ? ` — ${esc(incident.message)}` : ''}
-      <a href="/status" style="margin-left:0.75rem;color:inherit;text-decoration:underline;font-size:0.78rem;">View status →</a>
+      <a href="/status" style="margin-left:0.75rem;text-decoration:underline;font-size:0.78rem;">View status →</a>
     </div>` : '';
+  const tick = ticker ? `<div class="ticker"><span>🔥 THIS SATURDAY 11:00 AM ET — <b>VOLT RUNNER OG "SOLAR FLARE"</b> &nbsp;•&nbsp; FREE SHIPPING OVER $150 &nbsp;•&nbsp; ONE PAIR PER CUSTOMER &nbsp;•&nbsp; RAFFLE CLOSES FRIDAY 5PM &nbsp;•&nbsp; 🔥 THIS SATURDAY 11:00 AM ET — <b>VOLT RUNNER OG "SOLAR FLARE"</b> &nbsp;•&nbsp; FREE SHIPPING OVER $150 &nbsp;•&nbsp; ONE PAIR PER CUSTOMER &nbsp;•&nbsp; RAFFLE CLOSES FRIDAY 5PM &nbsp;•&nbsp; </span></div>` : '';
   const navAuth = loggedIn
-    ? `<a href="/dashboard">Dashboard</a><a href="/logout">Sign Out</a>`
-    : `<a href="/login">Sign In</a><a href="/login" class="nav-cta">Get Started</a>`;
+    ? `<a href="/dashboard">Account</a><a href="/logout">Sign Out</a>`
+    : `<a href="/login">Sign In</a><a href="/login" class="nav-cta">Join SoleDrop</a>`;
   return `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -193,18 +244,19 @@ function baseLayout({ title, head = '', body, scripts = '', incident, loggedIn }
   <title>${esc(title)}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com"/>
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet"/>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet"/>
   <style>${BASE_CSS}</style>
   ${head}
 </head>
 <body>
 ${banner}
+${tick}
 <nav>
   <div class="nav-inner">
-    <a href="/" class="nav-logo"><div class="nav-logo-icon">NM</div>NovaMind AI</a>
+    <a href="/" class="nav-logo"><div class="nav-logo-icon">👟</div>Sole<em>Drop</em></a>
     <div class="nav-links">
-      <a href="/products">Products</a>
-      <a href="/docs">Docs</a>
+      <a href="/products">Shop</a>
+      <a href="/drops">Drops</a>
       <a href="/status">Status</a>
       ${navAuth}
     </div>
@@ -213,14 +265,14 @@ ${banner}
 ${body}
 <footer>
   <div class="footer-inner">
-    <div class="footer-brand">NovaMind AI<span>Enterprise AI Infrastructure</span></div>
+    <div class="footer-brand">Sole<em>Drop</em><span>Limited sneaker drops, done right.</span></div>
     <div class="footer-links">
-      <a href="/products">Products</a>
-      <a href="/docs">Documentation</a>
+      <a href="/products">Shop</a>
+      <a href="/drops">Drops</a>
       <a href="/status">Status</a>
       <a href="/login">Sign In</a>
     </div>
-    <div class="footer-copy">&copy; 2024 NovaMind Technologies, Inc. All rights reserved.</div>
+    <div class="footer-copy">&copy; 2026 SoleDrop, Inc. All rights reserved.</div>
   </div>
 </footer>
 ${scripts}
@@ -228,124 +280,228 @@ ${scripts}
 </html>`;
 }
 
-// ── Page: Index ──────────────────────────────────────────────────────────────
+// ── Product card render ─────────────────────────────────────────────────────
+
+function productCard(p) {
+  const badgeCls = p.state === 'soldout' ? 'badge-red' : p.state === 'raffle' ? 'badge-accent' : p.badge === 'LOW STOCK' ? 'badge-yellow' : 'badge-green';
+  const badge = p.badge ? `<span class="pc-badge badge ${badgeCls}">${esc(p.badge)}</span>` : '';
+  const btn = p.state === 'soldout'
+    ? `<button class="btn btn-ghost" style="width:100%;" data-act="notify" data-name="${esc(p.name)}">Notify Me</button>`
+    : p.state === 'raffle'
+      ? `<button class="btn btn-accent" style="width:100%;" data-act="raffle" data-name="${esc(p.name)}">Enter Raffle</button>`
+      : `<button class="btn btn-primary" style="width:100%;" data-act="cop" data-name="${esc(p.name)}">Cop · $${p.price}</button>`;
+  return `<div class="pc">
+    <div class="pc-img" style="background:linear-gradient(135deg,${p.c1}22,${p.c2}33);">
+      ${badge}
+      <div class="pc-shoe">${sneakerSVG(p.c1, p.c2, p.id)}</div>
+    </div>
+    <div class="pc-body">
+      <div class="pc-name">${esc(p.name)}</div>
+      <div class="pc-color">${esc(p.colorway)}</div>
+      <div class="pc-price">$${p.price}</div>
+      ${btn}
+    </div>
+  </div>`;
+}
+
+const STORE_SCRIPTS = `<script>
+  document.addEventListener('click', function(e){
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const name = b.getAttribute('data-name') || 'this pair';
+    const act = b.getAttribute('data-act');
+    if (act === 'cop')         alert('🔥 Added to cart: ' + name + '\\n\\n(Demo store — checkout is disabled.)');
+    else if (act === 'notify') alert('🔔 We will notify you when ' + name + ' restocks.');
+    else if (act === 'raffle') alert('🎟️ Raffle entry received for ' + name + '. Winners drawn 24h before the drop!');
+  });
+</script>`;
+
+// ── Page: Index (storefront + drop countdown) ──────────────────────────────────
 
 function pageIndex(incident, loggedIn) {
+  const featured = PRODUCTS.filter(p => p.state !== 'soldout').slice(0, 8).map(productCard).join('');
   return baseLayout({
-    title: 'NovaMind AI — Enterprise AI Infrastructure',
+    title: 'SoleDrop — Limited Sneaker Drops',
     incident, loggedIn,
     head: `<style>
-      .hero{padding:6rem 1.5rem 5rem;text-align:center;position:relative;overflow:hidden;}
-      .hero::before{content:'';position:absolute;inset:0;background:radial-gradient(ellipse 80% 60% at 50% -10%,rgba(37,99,235,0.18),transparent),radial-gradient(ellipse 60% 40% at 80% 50%,rgba(124,58,237,0.12),transparent);pointer-events:none;}
-      .hero-eyebrow{display:inline-flex;align-items:center;gap:0.5rem;background:rgba(37,99,235,0.12);border:1px solid rgba(37,99,235,0.25);color:var(--blue-lt);padding:0.3rem 0.9rem;border-radius:20px;font-size:0.78rem;font-weight:600;letter-spacing:0.02em;text-transform:uppercase;margin-bottom:1.5rem;}
-      .hero h1{font-size:clamp(2.2rem,5vw,3.6rem);font-weight:800;line-height:1.15;color:#fff;max-width:760px;margin:0 auto 1.25rem;letter-spacing:-0.02em;}
-      .hero h1 .grad{background:linear-gradient(135deg,var(--blue-lt),var(--purple-lt));-webkit-background-clip:text;-webkit-text-fill-color:transparent;}
-      .hero p{color:var(--text-muted);font-size:1.1rem;max-width:560px;margin:0 auto 2.5rem;line-height:1.7;}
-      .hero-ctas{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;}
-      .stats{max-width:1200px;margin:0 auto;padding:3rem 1.5rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1.5rem;border-top:1px solid var(--border);}
-      .stat{text-align:center;}.stat-val{font-size:2rem;font-weight:800;color:#fff;letter-spacing:-0.03em;}.stat-val span{color:var(--blue-lt);}.stat-lbl{color:var(--text-muted);font-size:0.8rem;margin-top:0.2rem;}
-      .features{padding:5rem 1.5rem;}.section-header{text-align:center;margin-bottom:3rem;}.section-header h2{font-size:2rem;font-weight:800;color:#fff;margin-bottom:0.75rem;}.section-header p{color:var(--text-muted);max-width:500px;margin:0 auto;}
-      .features-grid{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:1.5rem;}
-      .feature-card{background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:1.75rem;transition:border-color 0.2s,transform 0.2s;}
-      .feature-card:hover{border-color:rgba(37,99,235,0.4);transform:translateY(-2px);}
-      .feature-icon{width:44px;height:44px;border-radius:10px;margin-bottom:1rem;display:flex;align-items:center;justify-content:center;font-size:1.3rem;}
-      .fi-blue{background:rgba(37,99,235,0.15);}.fi-purple{background:rgba(124,58,237,0.15);}.fi-green{background:rgba(16,185,129,0.15);}.fi-orange{background:rgba(245,158,11,0.15);}
-      .feature-card h3{font-size:1rem;font-weight:700;color:#fff;margin-bottom:0.5rem;}.feature-card p{color:var(--text-muted);font-size:0.875rem;line-height:1.65;}
-      .trust{padding:3.5rem 1.5rem;border-top:1px solid var(--border);}.logo-row{max-width:1000px;margin:0 auto;display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:2.5rem;}
-      .logo-item{color:var(--text-muted);font-weight:700;font-size:0.95rem;letter-spacing:0.04em;opacity:0.6;}
-      .cta-band{margin:4rem auto;max-width:900px;padding:0 1.5rem;}.cta-inner{background:linear-gradient(135deg,rgba(37,99,235,0.15),rgba(124,58,237,0.15));border:1px solid rgba(37,99,235,0.3);border-radius:20px;padding:3.5rem 2rem;text-align:center;}
-      .cta-inner h2{font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:0.75rem;}.cta-inner p{color:var(--text-muted);margin-bottom:2rem;}.cta-inner .ctas{display:flex;gap:1rem;justify-content:center;flex-wrap:wrap;}
-      .api-demo{padding:5rem 1.5rem;background:var(--navy2);}.api-demo-inner{max-width:1100px;margin:0 auto;display:grid;grid-template-columns:1fr 1fr;gap:3rem;align-items:center;}
-      @media(max-width:700px){.api-demo-inner{grid-template-columns:1fr;}}
-      .api-demo-text h2{font-size:1.7rem;font-weight:800;color:#fff;margin-bottom:0.75rem;}.api-demo-text p{color:var(--text-muted);margin-bottom:1.5rem;line-height:1.7;}
-      .code-block{background:#0a0e1a;border:1px solid var(--border);border-radius:12px;overflow:hidden;}
-      .code-block-header{background:rgba(255,255,255,0.04);padding:0.6rem 1rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:0.5rem;}
-      .code-dot{width:10px;height:10px;border-radius:50%;}.code-block-header span{margin-left:auto;color:var(--text-muted);font-size:0.75rem;font-family:'JetBrains Mono',monospace;}
-      .code-block pre{padding:1.25rem;font-family:'JetBrains Mono',monospace;font-size:0.78rem;line-height:1.7;color:#94a3b8;overflow-x:auto;}
-      .code-block .kw{color:#818cf8;}.code-block .str{color:#34d399;}.code-block .key{color:#93c5fd;}.code-block .num{color:#f59e0b;}.code-block .cmt{color:#475569;}
+      .hero{position:relative;overflow:hidden;background:var(--ink);color:#fff;}
+      .hero::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 15% 20%,rgba(255,77,23,0.4),transparent 45%),radial-gradient(circle at 85% 80%,rgba(26,92,255,0.35),transparent 45%);}
+      .hero-inner{position:relative;max-width:1200px;margin:0 auto;padding:4rem 1.5rem 4.5rem;display:grid;grid-template-columns:1.1fr 0.9fr;gap:2.5rem;align-items:center;}
+      @media(max-width:820px){.hero-inner{grid-template-columns:1fr;text-align:center;}}
+      .hero-eyebrow{display:inline-flex;align-items:center;gap:0.5rem;background:rgba(255,255,255,0.12);border:1px solid rgba(255,255,255,0.2);color:#fff;padding:0.35rem 0.9rem;border-radius:999px;font-size:0.72rem;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;margin-bottom:1.25rem;}
+      .hero h1{font-size:clamp(2.6rem,6vw,4.4rem);font-weight:900;line-height:0.98;letter-spacing:-0.03em;margin-bottom:1rem;text-transform:uppercase;}
+      .hero h1 .flare{color:var(--accent);}
+      .hero p{color:rgba(255,255,255,0.75);font-size:1.05rem;max-width:440px;margin-bottom:1.75rem;}
+      @media(max-width:820px){.hero p{margin-left:auto;margin-right:auto;}}
+      .hero-ctas{display:flex;gap:0.75rem;flex-wrap:wrap;}
+      @media(max-width:820px){.hero-ctas{justify-content:center;}}
+      .countdown{background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.14);border-radius:20px;padding:1.75rem;backdrop-filter:blur(6px);}
+      .cd-label{font-size:0.72rem;font-weight:800;letter-spacing:0.14em;text-transform:uppercase;color:var(--lime);margin-bottom:0.35rem;}
+      .cd-model{font-size:1.35rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.01em;margin-bottom:1.25rem;}
+      .cd-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:0.6rem;}
+      .cd-cell{background:var(--bg2);color:var(--ink);border-radius:12px;padding:0.85rem 0.4rem;text-align:center;}
+      .cd-num{font-family:'JetBrains Mono',monospace;font-size:1.9rem;font-weight:700;line-height:1;letter-spacing:-0.02em;}
+      .cd-unit{font-size:0.62rem;font-weight:800;letter-spacing:0.1em;text-transform:uppercase;color:var(--muted);margin-top:0.35rem;}
+      .cd-live{display:none;background:var(--accent);color:#fff;text-align:center;padding:1.4rem;border-radius:12px;font-weight:900;text-transform:uppercase;letter-spacing:0.05em;font-size:1.15rem;}
+
+      .drop-section{padding:3.5rem 1.5rem 1rem;}
+      .sec-head{max-width:1200px;margin:0 auto 1.75rem;display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;flex-wrap:wrap;}
+      .sec-head h2{font-size:1.9rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.02em;}
+      .sec-head p{color:var(--muted);font-size:0.9rem;}
+      .grid{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:1.25rem;}
+      .pc{background:var(--panel);border:1px solid var(--line-soft);border-radius:16px;overflow:hidden;box-shadow:var(--shadow-sm);transition:transform 0.15s,box-shadow 0.15s;}
+      .pc:hover{transform:translateY(-4px);box-shadow:var(--shadow);}
+      .pc-img{position:relative;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;padding:1.25rem;}
+      .pc-shoe{width:82%;filter:drop-shadow(0 8px 10px rgba(0,0,0,0.12));}
+      .pc-badge{position:absolute;top:0.75rem;left:0.75rem;}
+      .pc-body{padding:1rem 1.1rem 1.2rem;}
+      .pc-name{font-weight:800;font-size:1rem;letter-spacing:-0.01em;}
+      .pc-color{color:var(--muted);font-size:0.8rem;margin-bottom:0.15rem;}
+      .pc-price{font-weight:800;font-size:0.95rem;margin:0.4rem 0 0.85rem;}
+
+      .strip{background:var(--bg2);border-top:1px solid var(--line);border-bottom:1px solid var(--line);margin-top:3rem;}
+      .strip-inner{max-width:1100px;margin:0 auto;padding:2.5rem 1.5rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1.5rem;text-align:center;}
+      .strip .n{font-size:1.8rem;font-weight:900;letter-spacing:-0.02em;}
+      .strip .n em{color:var(--accent);font-style:normal;}
+      .strip .l{color:var(--muted);font-size:0.8rem;margin-top:0.15rem;}
     </style>`,
     body: `
 <section class="hero">
-  <div class="hero-eyebrow">✦ Now in General Availability</div>
-  <h1>Enterprise AI Infrastructure<br><span class="grad">Built for Scale</span></h1>
-  <p>NovaMind powers the world's most demanding AI workloads — from model inference to custom fine-tuning and intelligent workflow automation.</p>
-  <div class="hero-ctas">
-    <a href="/login" class="btn btn-primary">Start Building</a>
-    <a href="/products" class="btn btn-ghost">View Products</a>
-  </div>
-</section>
-<div class="stats container">
-  <div class="stat"><div class="stat-val">10<span>M+</span></div><div class="stat-lbl">API calls per day</div></div>
-  <div class="stat"><div class="stat-val">99<span>.99%</span></div><div class="stat-lbl">Uptime SLA</div></div>
-  <div class="stat"><div class="stat-val">&lt;80<span>ms</span></div><div class="stat-lbl">p50 inference latency</div></div>
-  <div class="stat"><div class="stat-val">500<span>+</span></div><div class="stat-lbl">Enterprise customers</div></div>
-  <div class="stat"><div class="stat-val">18</div><div class="stat-lbl">Global regions</div></div>
-</div>
-<section class="features">
-  <div class="section-header"><h2>Everything you need to ship AI</h2><p>One platform for model APIs, training infrastructure, and intelligent automation.</p></div>
-  <div class="features-grid">
-    <div class="feature-card"><div class="feature-icon fi-blue">🤖</div><h3>NovaMind Chat API</h3><p>OpenAI-compatible chat completions with 200K context windows, streaming, and function calling. Deploy in minutes with your existing SDK.</p></div>
-    <div class="feature-card"><div class="feature-icon fi-purple">⚗️</div><h3>ModelForge</h3><p>Fine-tune foundation models on your proprietary data with LoRA and QLoRA support. Full tenant isolation — your data never touches another customer's pipeline.</p></div>
-    <div class="feature-card"><div class="feature-icon fi-green">🗄️</div><h3>DataVault</h3><p>Secure training data management with end-to-end encryption, dataset versioning, and compliance-ready audit logs. SOC 2 Type II certified.</p></div>
-    <div class="feature-card"><div class="feature-icon fi-orange">⚡</div><h3>Autopilot</h3><p>Orchestrate multi-step AI workflows across 200+ enterprise integrations. Build agentic pipelines that act on your business data in real time.</p></div>
-    <div class="feature-card"><div class="feature-icon fi-blue">🔐</div><h3>Enterprise Security</h3><p>SOC 2, HIPAA, and FedRAMP High. Private cloud deployments, customer-managed keys, IP allowlisting, and SSO with every enterprise plan.</p></div>
-    <div class="feature-card"><div class="feature-icon fi-purple">📊</div><h3>Observability</h3><p>Real-time usage dashboards, per-key cost tracking, latency histograms, and anomaly alerts — integrated with Datadog, Grafana, and OTel.</p></div>
-  </div>
-</section>
-<section class="api-demo">
-  <div class="api-demo-inner">
-    <div class="api-demo-text">
-      <h2>OpenAI-compatible.<br>Swap in 5 minutes.</h2>
-      <p>NovaMind's API is a drop-in replacement for your existing LLM provider. Change two lines of code and you're running on enterprise infrastructure with dedicated capacity and guaranteed SLAs.</p>
-      <a href="/docs" class="btn btn-primary">Read the Docs</a>
-    </div>
-    <div class="code-block">
-      <div class="code-block-header">
-        <div class="code-dot" style="background:#ef4444"></div>
-        <div class="code-dot" style="background:#f59e0b"></div>
-        <div class="code-dot" style="background:#10b981"></div>
-        <span>api_example.py</span>
+  <div class="hero-inner">
+    <div>
+      <div class="hero-eyebrow">🔥 Drop 042 — Loading</div>
+      <h1>Cop the<br><span class="flare">heat.</span><br>Skip the resell.</h1>
+      <p>Limited pairs. Fair drops. Every SoleDrop release is verified authentic and one-per-customer — no bots, no scalpers, no games.</p>
+      <div class="hero-ctas">
+        <a href="/products" class="btn btn-accent">Shop the Drop</a>
+        <a href="/drops" class="btn btn-ghost" style="border-color:#fff;color:#fff;">Release Calendar</a>
       </div>
-      <pre><span class="kw">from</span> novamind <span class="kw">import</span> NovaMind
-
-client = NovaMind(
-    api_key=<span class="str">"nm-sk-..."</span>,
-    base_url=<span class="str">"https://novamind.mihirkansagra.com"</span>
-)
-
-response = client.chat.completions.create(
-    model=<span class="str">"novamind-chat-v2"</span>,
-    messages=[{
-        <span class="key">"role"</span>: <span class="str">"user"</span>,
-        <span class="key">"content"</span>: <span class="str">"Summarize Q3 earnings"</span>
-    }],
-    max_tokens=<span class="num">1024</span>,
-    stream=<span class="kw">True</span>
-)
-<span class="cmt"># Works with streaming, function calling, and RAG</span></pre>
+    </div>
+    <div class="countdown" id="countdown">
+      <div class="cd-label">Next Drop</div>
+      <div class="cd-model">Volt Runner OG · "Solar Flare"</div>
+      <div class="cd-grid" id="cd-grid">
+        <div class="cd-cell"><div class="cd-num" id="cd-d">--</div><div class="cd-unit">Days</div></div>
+        <div class="cd-cell"><div class="cd-num" id="cd-h">--</div><div class="cd-unit">Hrs</div></div>
+        <div class="cd-cell"><div class="cd-num" id="cd-m">--</div><div class="cd-unit">Min</div></div>
+        <div class="cd-cell"><div class="cd-num" id="cd-s">--</div><div class="cd-unit">Sec</div></div>
+      </div>
+      <div class="cd-live" id="cd-live">🔥 Drop is LIVE — Shop now</div>
     </div>
   </div>
 </section>
-<section class="trust">
-  <div class="section-header"><p>Trusted by engineering teams at</p></div>
-  <div class="logo-row">
-    <div class="logo-item">ACME CORP</div>
-    <div class="logo-item">VERTEX SYSTEMS</div>
-    <div class="logo-item">NEXUS HEALTH</div>
-    <div class="logo-item">ORBIS FINANCIAL</div>
-    <div class="logo-item">ZENITH LABS</div>
-    <div class="logo-item">POLARIS IO</div>
+
+<section class="drop-section">
+  <div class="sec-head">
+    <div><h2>This Week's Drop</h2><p>Fresh pairs, released in limited runs.</p></div>
+    <a href="/products" class="btn btn-ghost">View All →</a>
   </div>
+  <div class="grid">${featured}</div>
 </section>
-<div class="cta-band">
-  <div class="cta-inner">
-    <h2>Start building in minutes</h2>
-    <p>Free tier includes 100K tokens/month. No credit card required.</p>
-    <div class="ctas">
-      <a href="/login" class="btn btn-primary">Create Free Account</a>
-      <a href="/chat" class="btn btn-ghost">Try the AI Demo →</a>
-    </div>
+
+<div class="strip">
+  <div class="strip-inner">
+    <div><div class="n">1<em>M+</em></div><div class="l">Pairs shipped</div></div>
+    <div><div class="n">100<em>%</em></div><div class="l">Verified authentic</div></div>
+    <div><div class="n">1</div><div class="l">Pair per customer</div></div>
+    <div><div class="n">0</div><div class="l">Bots at checkout</div></div>
   </div>
+</div>`,
+    scripts: `${STORE_SCRIPTS}
+<script>
+  function nextDropDate(){
+    const now = new Date();
+    const t = new Date(now);
+    t.setHours(11,0,0,0);              // 11:00 local
+    let add = (6 - now.getDay() + 7) % 7;   // days until Saturday (6)
+    if (add === 0 && t <= now) add = 7;
+    t.setDate(t.getDate() + add);
+    return t;
+  }
+  function pad(n){ return String(n).padStart(2,'0'); }
+  function tick(){
+    const target = nextDropDate();
+    let diff = Math.floor((target - new Date())/1000);
+    const grid = document.getElementById('cd-grid'), live = document.getElementById('cd-live');
+    if (diff <= 0){ if(grid) grid.style.display='none'; if(live) live.style.display='block'; return; }
+    const d = Math.floor(diff/86400); diff%=86400;
+    const h = Math.floor(diff/3600);  diff%=3600;
+    const m = Math.floor(diff/60);    const s = diff%60;
+    const set=(id,v)=>{const el=document.getElementById(id); if(el) el.textContent=v;};
+    set('cd-d', pad(d)); set('cd-h', pad(h)); set('cd-m', pad(m)); set('cd-s', pad(s));
+  }
+  tick(); setInterval(tick, 1000);
+</script>`,
+  });
+}
+
+// ── Page: Products (full catalog) ──────────────────────────────────────────────
+
+function pageProducts(incident, loggedIn) {
+  const cards = PRODUCTS.map(productCard).join('');
+  return baseLayout({
+    title: 'Shop — SoleDrop',
+    incident, loggedIn,
+    head: `<style>
+      .shop-wrap{max-width:1200px;margin:0 auto;padding:3rem 1.5rem 1rem;}
+      .shop-head{margin-bottom:1.75rem;}
+      .shop-head h1{font-size:2.2rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.02em;}
+      .shop-head p{color:var(--muted);}
+      .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:1.25rem;}
+      .pc{background:var(--panel);border:1px solid var(--line-soft);border-radius:16px;overflow:hidden;box-shadow:var(--shadow-sm);transition:transform 0.15s,box-shadow 0.15s;}
+      .pc:hover{transform:translateY(-4px);box-shadow:var(--shadow);}
+      .pc-img{position:relative;aspect-ratio:4/3;display:flex;align-items:center;justify-content:center;padding:1.25rem;}
+      .pc-shoe{width:82%;filter:drop-shadow(0 8px 10px rgba(0,0,0,0.12));}
+      .pc-badge{position:absolute;top:0.75rem;left:0.75rem;}
+      .pc-body{padding:1rem 1.1rem 1.2rem;}
+      .pc-name{font-weight:800;font-size:1rem;letter-spacing:-0.01em;}
+      .pc-color{color:var(--muted);font-size:0.8rem;margin-bottom:0.15rem;}
+      .pc-price{font-weight:800;font-size:0.95rem;margin:0.4rem 0 0.85rem;}
+    </style>`,
+    body: `
+<div class="shop-wrap">
+  <div class="shop-head"><h1>Shop the Drop</h1><p>${PRODUCTS.length} styles · new pairs every Saturday.</p></div>
+  <div class="grid">${cards}</div>
+</div>`,
+    scripts: STORE_SCRIPTS,
+  });
+}
+
+// ── Page: Drops (release calendar) ─────────────────────────────────────────────
+
+function pageDrops(incident, loggedIn) {
+  const drops = [
+    ['SAT · THIS WEEK', 'Volt Runner OG', '"Solar Flare"', 'Live raffle + shop', 'accent'],
+    ['NEXT SAT', 'Grail High', '"Panda"', 'Raffle only', 'ink'],
+    ['IN 2 WEEKS', 'Apex Trail 2', '"Trail Pack"', 'General release', 'ink'],
+    ['IN 3 WEEKS', 'Cinder Low', '"Ember Restock"', 'Restock — notify list first', 'ink'],
+  ];
+  const rows = drops.map(([when, model, cw, note, kind]) => `
+    <div class="drop-row">
+      <div class="drop-when badge ${kind === 'accent' ? 'badge-accent' : 'badge-ink'}">${esc(when)}</div>
+      <div class="drop-info"><div class="drop-model">${esc(model)} <span>${esc(cw)}</span></div><div class="drop-note">${esc(note)}</div></div>
+      <a href="/products" class="btn btn-ghost drop-cta">Details →</a>
+    </div>`).join('');
+  return baseLayout({
+    title: 'Release Calendar — SoleDrop',
+    incident, loggedIn,
+    head: `<style>
+      .cal-wrap{max-width:860px;margin:0 auto;padding:3.5rem 1.5rem 1rem;}
+      .cal-wrap h1{font-size:2.2rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.02em;margin-bottom:0.4rem;}
+      .cal-wrap>p{color:var(--muted);margin-bottom:2.25rem;}
+      .drop-row{display:flex;align-items:center;gap:1.25rem;background:var(--panel);border:1px solid var(--line-soft);border-radius:14px;padding:1.1rem 1.25rem;margin-bottom:0.9rem;box-shadow:var(--shadow-sm);}
+      .drop-when{white-space:nowrap;}
+      .drop-info{flex:1;}
+      .drop-model{font-weight:800;font-size:1.05rem;}
+      .drop-model span{color:var(--accent);font-weight:700;}
+      .drop-note{color:var(--muted);font-size:0.82rem;margin-top:0.15rem;}
+      .drop-cta{padding:0.45rem 1rem;font-size:0.72rem;}
+      @media(max-width:600px){.drop-cta{display:none;}}
+    </style>`,
+    body: `
+<div class="cal-wrap">
+  <h1>Release Calendar</h1>
+  <p>Every drop goes live Saturday at 11:00 AM ET. Set your notifications so you never miss a pair.</p>
+  ${rows}
 </div>`,
   });
 }
@@ -354,32 +510,34 @@ response = client.chat.completions.create(
 
 function pageLogin(error) {
   return baseLayout({
-    title: 'Sign In — NovaMind AI',
-    incident: null, loggedIn: false,
+    title: 'Sign In — SoleDrop',
+    incident: null, loggedIn: false, ticker: false,
     head: `<style>
-      .login-wrap{min-height:calc(100vh - 60px);display:flex;align-items:center;justify-content:center;padding:2rem 1.5rem;}
-      .login-card{background:var(--glass);border:1px solid var(--border);border-radius:16px;padding:2.5rem;width:100%;max-width:400px;}
-      .login-card h1{font-size:1.4rem;font-weight:800;color:#fff;margin-bottom:0.4rem;}
-      .login-card p{color:var(--text-muted);font-size:0.875rem;margin-bottom:2rem;}
+      .login-wrap{min-height:calc(100vh - 128px);display:flex;align-items:center;justify-content:center;padding:2rem 1.5rem;}
+      .login-card{background:var(--panel);border:1px solid var(--line-soft);border-radius:20px;padding:2.5rem;width:100%;max-width:400px;box-shadow:var(--shadow);}
+      .login-card h1{font-size:1.5rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.01em;margin-bottom:0.35rem;}
+      .login-card>p{color:var(--muted);font-size:0.875rem;margin-bottom:2rem;}
       .form-group{margin-bottom:1.25rem;}
-      .form-group label{display:block;font-size:0.82rem;font-weight:600;color:var(--text-muted);margin-bottom:0.4rem;}
-      .form-group input{width:100%;background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:8px;padding:0.65rem 0.9rem;color:#fff;font-size:0.875rem;font-family:inherit;outline:none;transition:border-color 0.15s;}
-      .form-group input:focus{border-color:var(--blue);}
-      .login-btn{width:100%;padding:0.75rem;background:var(--blue);color:#fff;border:none;border-radius:8px;font-size:0.9rem;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.15s;}
-      .login-btn:hover{background:var(--blue-lt);}
-      .login-error{background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;font-size:0.82rem;padding:0.65rem 0.9rem;border-radius:8px;margin-bottom:1.25rem;}
+      .form-group label{display:block;font-size:0.75rem;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--ink2);margin-bottom:0.4rem;}
+      .form-group input{width:100%;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:0.7rem 0.9rem;color:var(--ink);font-size:0.9rem;font-family:inherit;outline:none;transition:border-color 0.15s;}
+      .form-group input:focus{border-color:var(--accent);}
+      .login-btn{width:100%;padding:0.8rem;background:var(--accent);color:#fff;border:none;border-radius:999px;font-size:0.85rem;font-weight:800;text-transform:uppercase;letter-spacing:0.03em;cursor:pointer;font-family:inherit;transition:background 0.15s;}
+      .login-btn:hover{background:var(--accent-dk);}
+      .login-error{background:rgba(229,52,43,0.1);border:1px solid rgba(229,52,43,0.3);color:#b91c1c;font-size:0.82rem;padding:0.65rem 0.9rem;border-radius:10px;margin-bottom:1.25rem;}
+      .login-hint{text-align:center;font-size:0.78rem;color:var(--muted);margin-top:1.25rem;}
     </style>`,
     body: `
 <div class="login-wrap">
   <div class="login-card">
     <h1>Welcome back</h1>
-    <p>Sign in to your NovaMind account</p>
+    <p>Sign in to enter raffles, cop drops, and track orders.</p>
     ${error ? `<div class="login-error">${esc(error)}</div>` : ''}
     <form method="POST" action="/login">
-      <div class="form-group"><label for="username">Username</label><input type="text" id="username" name="username" autocomplete="username" required/></div>
+      <div class="form-group"><label for="username">Email or Username</label><input type="text" id="username" name="username" autocomplete="username" required/></div>
       <div class="form-group"><label for="password">Password</label><input type="password" id="password" name="password" autocomplete="current-password" required/></div>
       <button type="submit" class="login-btn">Sign In</button>
     </form>
+    <div class="login-hint">New here? Membership is free — creating an account gets you drop alerts.</div>
   </div>
 </div>`,
   });
@@ -389,81 +547,81 @@ function pageLogin(error) {
 
 function pageStatus(loggedIn) {
   return baseLayout({
-    title: 'System Status — NovaMind AI',
-    incident: null, loggedIn,
+    title: 'System Status — SoleDrop',
+    incident: null, loggedIn, ticker: false,
     head: `<style>
       .status-page{max-width:820px;margin:0 auto;padding:3rem 1.5rem;}
-      .status-header{margin-bottom:2.5rem;}.status-header h1{font-size:1.8rem;font-weight:800;color:#fff;margin-bottom:0.4rem;}.status-header p{color:var(--text-muted);font-size:0.875rem;}
+      .status-header{margin-bottom:2.5rem;}.status-header h1{font-size:1.9rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.02em;margin-bottom:0.4rem;}.status-header p{color:var(--muted);font-size:0.875rem;}
       .overall-status{border-radius:14px;padding:1.25rem 1.5rem;display:flex;align-items:center;gap:1rem;margin-bottom:2.5rem;border:1px solid;}
-      .overall-status.operational{background:rgba(16,185,129,0.08);border-color:rgba(16,185,129,0.25);}
-      .overall-status.degraded{background:rgba(245,158,11,0.08);border-color:rgba(245,158,11,0.25);}
-      .overall-status.outage{background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.25);}
-      .status-icon{font-size:1.5rem;}.status-text h2{font-size:1.05rem;font-weight:700;color:#fff;}.status-text p{font-size:0.8rem;color:var(--text-muted);margin-top:0.15rem;}
-      .status-updated{margin-left:auto;font-size:0.75rem;color:var(--text-muted);white-space:nowrap;}
+      .overall-status.operational{background:rgba(18,161,80,0.09);border-color:rgba(18,161,80,0.3);}
+      .overall-status.degraded{background:rgba(224,138,0,0.1);border-color:rgba(224,138,0,0.35);}
+      .overall-status.outage{background:rgba(229,52,43,0.09);border-color:rgba(229,52,43,0.3);}
+      .status-icon{font-size:1.5rem;}.status-text h2{font-size:1.1rem;font-weight:800;color:var(--ink);}.status-text p{font-size:0.8rem;color:var(--muted);margin-top:0.15rem;}
+      .status-updated{margin-left:auto;font-size:0.75rem;color:var(--muted);white-space:nowrap;}
       #incident-details{display:none;margin-bottom:2.5rem;}
-      .incident-panel{background:rgba(239,68,68,0.05);border:1px solid rgba(239,68,68,0.25);border-radius:14px;overflow:hidden;}
-      .incident-panel-header{background:rgba(239,68,68,0.12);padding:0.9rem 1.4rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(239,68,68,0.2);}
-      .incident-panel-title{font-size:0.78rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;color:#fca5a5;}
-      .incident-panel-badge{font-size:0.68rem;font-weight:700;padding:0.2rem 0.55rem;border-radius:99px;background:rgba(239,68,68,0.2);color:#fca5a5;border:1px solid rgba(239,68,68,0.3);animation:blink-badge 1.8s ease-in-out infinite;}
+      .incident-panel{background:rgba(229,52,43,0.04);border:1px solid rgba(229,52,43,0.28);border-radius:14px;overflow:hidden;}
+      .incident-panel-header{background:rgba(229,52,43,0.1);padding:0.9rem 1.4rem;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid rgba(229,52,43,0.2);}
+      .incident-panel-title{font-size:0.78rem;font-weight:800;letter-spacing:0.06em;text-transform:uppercase;color:#b91c1c;}
+      .incident-panel-badge{font-size:0.68rem;font-weight:800;padding:0.2rem 0.55rem;border-radius:99px;background:#e5342b;color:#fff;animation:blink-badge 1.8s ease-in-out infinite;}
       @keyframes blink-badge{0%,100%{opacity:1}50%{opacity:0.45}}
-      .atk-timeline{padding:1.4rem 1.4rem 0.4rem;}.atk-timeline-title{font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:1rem;}
+      .atk-timeline{padding:1.4rem 1.4rem 0.4rem;}.atk-timeline-title{font-size:0.72rem;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:1rem;}
       .atk-phase{display:flex;gap:1rem;margin-bottom:1.1rem;position:relative;}
-      .atk-phase:not(:last-child)::before{content:'';position:absolute;left:15px;top:32px;bottom:-12px;width:1px;background:rgba(239,68,68,0.2);}
-      .atk-num{width:32px;height:32px;border-radius:50%;flex-shrink:0;background:rgba(239,68,68,0.15);border:1px solid rgba(239,68,68,0.35);display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:700;color:#fca5a5;}
-      .atk-body{flex:1;}.atk-label{font-size:0.82rem;font-weight:700;color:#fff;margin-bottom:0.15rem;}.atk-desc{font-size:0.78rem;color:var(--text-muted);line-height:1.55;}
-      .atk-tags{display:flex;flex-wrap:wrap;gap:0.3rem;margin-top:0.4rem;}
-      .atk-tag{font-size:0.66rem;font-family:'JetBrains Mono',monospace;font-weight:500;padding:0.15rem 0.45rem;border-radius:4px;background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.2);color:#fca5a5;}
-      .ioc-section{padding:0 1.4rem 1.2rem;border-top:1px solid rgba(239,68,68,0.15);margin-top:0.4rem;}
-      .ioc-section-title{font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin:1rem 0 0.75rem;}
-      .ioc-table{width:100%;border-collapse:collapse;}.ioc-table td{padding:0.5rem 0.6rem;font-size:0.8rem;border-bottom:1px solid rgba(255,255,255,0.05);vertical-align:top;}
-      .ioc-table td:first-child{color:var(--text-muted);font-weight:500;width:38%;white-space:nowrap;}.ioc-table td:last-child{color:var(--text);font-family:'JetBrains Mono',monospace;font-size:0.74rem;word-break:break-all;}
-      .ioc-table tr:last-child td{border-bottom:none;}.ioc-high{color:#fca5a5 !important;}.ioc-med{color:var(--yellow) !important;}
-      .remediation-section{padding:0 1.4rem 1.4rem;border-top:1px solid rgba(239,68,68,0.15);}
+      .atk-phase:not(:last-child)::before{content:'';position:absolute;left:15px;top:32px;bottom:-12px;width:1px;background:rgba(229,52,43,0.25);}
+      .atk-num{width:32px;height:32px;border-radius:50%;flex-shrink:0;background:rgba(229,52,43,0.12);border:1px solid rgba(229,52,43,0.35);display:flex;align-items:center;justify-content:center;font-size:0.72rem;font-weight:800;color:#b91c1c;}
+      .atk-body{flex:1;}.atk-label{font-size:0.85rem;font-weight:800;color:var(--ink);margin-bottom:0.15rem;}.atk-desc{font-size:0.8rem;color:var(--ink2);line-height:1.6;}
+      .atk-desc code{background:rgba(21,18,16,0.06);padding:0.05rem 0.3rem;border-radius:4px;}
+      .atk-tags{display:flex;flex-wrap:wrap;gap:0.3rem;margin-top:0.45rem;}
+      .atk-tag{font-size:0.66rem;font-family:'JetBrains Mono',monospace;font-weight:500;padding:0.15rem 0.45rem;border-radius:4px;background:rgba(229,52,43,0.08);border:1px solid rgba(229,52,43,0.2);color:#b91c1c;}
+      .ioc-section{padding:0 1.4rem 1.2rem;border-top:1px solid rgba(229,52,43,0.15);margin-top:0.4rem;}
+      .ioc-section-title{font-size:0.72rem;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin:1rem 0 0.75rem;}
+      .ioc-table{width:100%;border-collapse:collapse;}.ioc-table td{padding:0.5rem 0.6rem;font-size:0.8rem;border-bottom:1px solid var(--line-soft);vertical-align:top;}
+      .ioc-table td:first-child{color:var(--muted);font-weight:600;width:38%;white-space:nowrap;}.ioc-table td:last-child{color:var(--ink);font-family:'JetBrains Mono',monospace;font-size:0.74rem;word-break:break-all;}
+      .ioc-table tr:last-child td{border-bottom:none;}.ioc-high{color:#b91c1c !important;}.ioc-med{color:#a35d00 !important;}
+      .remediation-section{padding:0 1.4rem 1.4rem;border-top:1px solid rgba(229,52,43,0.15);}
       .remediation-section-header{display:flex;align-items:center;justify-content:space-between;margin:1rem 0 0.75rem;}
-      .remediation-section-title{font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);}
-      .remediation-progress{font-size:0.72rem;color:var(--text-muted);}.remediation-progress span{color:var(--green);font-weight:700;}
-      .checklist{list-style:none;}.checklist li{display:flex;align-items:flex-start;gap:0.75rem;padding:0.55rem 0;border-bottom:1px solid rgba(255,255,255,0.04);cursor:pointer;}
+      .remediation-section-title{font-size:0.72rem;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);}
+      .remediation-progress{font-size:0.72rem;color:var(--muted);}.remediation-progress span{color:var(--good);font-weight:800;}
+      .checklist{list-style:none;}.checklist li{display:flex;align-items:flex-start;gap:0.75rem;padding:0.55rem 0;border-bottom:1px solid var(--line-soft);cursor:pointer;}
       .checklist li:last-child{border-bottom:none;}
-      .check-box{width:18px;height:18px;border-radius:4px;flex-shrink:0;margin-top:2px;border:1.5px solid rgba(255,255,255,0.25);background:transparent;display:flex;align-items:center;justify-content:center;font-size:0.7rem;transition:all 0.15s;}
-      .check-box.checked{background:var(--green);border-color:var(--green);color:#fff;}
-      .checklist li .check-text{flex:1;}.check-title{font-size:0.82rem;font-weight:600;color:var(--text);line-height:1.35;}.check-title.completed{color:var(--text-muted);text-decoration:line-through;}
-      .check-hint{font-size:0.73rem;color:var(--text-muted);margin-top:0.15rem;line-height:1.4;}
-      .remediation-note{margin-top:1rem;padding:0.65rem 0.9rem;border-radius:8px;background:rgba(245,158,11,0.08);border:1px solid rgba(245,158,11,0.2);font-size:0.76rem;color:var(--yellow);line-height:1.5;}
-      .services-section{margin-bottom:2.5rem;}.services-section h3{font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:0.75rem;}
-      .service-row{display:flex;align-items:center;justify-content:space-between;padding:0.9rem 1.1rem;border-bottom:1px solid var(--border);}
-      .service-row:first-of-type{border-top:1px solid var(--border);}
-      .service-name{font-size:0.875rem;font-weight:500;color:var(--text);}.service-name small{display:block;font-size:0.75rem;color:var(--text-muted);font-weight:400;margin-top:0.1rem;}
-      .service-status{display:flex;align-items:center;gap:0.4rem;font-size:0.78rem;font-weight:600;}
-      .dot{width:8px;height:8px;border-radius:50%;}.dot-green{background:var(--green);}.dot-yellow{background:var(--yellow);animation:pulse-yellow 1.4s ease-in-out infinite;}.dot-red{background:var(--red);animation:pulse-red2 1.2s ease-in-out infinite;}
+      .check-box{width:18px;height:18px;border-radius:5px;flex-shrink:0;margin-top:2px;border:1.5px solid rgba(21,18,16,0.28);background:transparent;display:flex;align-items:center;justify-content:center;font-size:0.7rem;transition:all 0.15s;}
+      .check-box.checked{background:var(--good);border-color:var(--good);color:#fff;}
+      .checklist li .check-text{flex:1;}.check-title{font-size:0.85rem;font-weight:700;color:var(--ink);line-height:1.35;}.check-title.completed{color:var(--muted);text-decoration:line-through;}
+      .check-hint{font-size:0.75rem;color:var(--muted);margin-top:0.15rem;line-height:1.45;}
+      .remediation-note{margin-top:1rem;padding:0.65rem 0.9rem;border-radius:10px;background:rgba(224,138,0,0.1);border:1px solid rgba(224,138,0,0.25);font-size:0.76rem;color:#a35d00;line-height:1.5;}
+      .services-section{margin-bottom:2.5rem;}.services-section h3,.uptime-section h3,.incidents-section h3{font-size:0.75rem;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:0.75rem;}
+      .service-row{display:flex;align-items:center;justify-content:space-between;padding:0.9rem 1.1rem;border-bottom:1px solid var(--line-soft);}
+      .service-row:first-of-type{border-top:1px solid var(--line-soft);}
+      .service-name{font-size:0.875rem;font-weight:600;color:var(--ink);}.service-name small{display:block;font-size:0.75rem;color:var(--muted);font-weight:400;margin-top:0.1rem;}
+      .service-status{display:flex;align-items:center;gap:0.4rem;font-size:0.78rem;font-weight:700;}
+      .dot{width:8px;height:8px;border-radius:50%;}.dot-green{background:var(--good);}.dot-yellow{background:var(--warn);animation:pulse-yellow 1.4s ease-in-out infinite;}.dot-red{background:var(--bad);animation:pulse-red2 1.2s ease-in-out infinite;}
       @keyframes pulse-yellow{0%,100%{opacity:1}50%{opacity:0.45}}@keyframes pulse-red2{0%,100%{opacity:1}50%{opacity:0.4}}
-      .uptime-section{margin-bottom:2.5rem;}.uptime-section h3{font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:0.75rem;}
+      .uptime-section{margin-bottom:2.5rem;}
       .uptime-row{margin-bottom:1.1rem;}.uptime-row-header{display:flex;justify-content:space-between;align-items:center;font-size:0.82rem;margin-bottom:0.4rem;}
-      .uptime-row-header span:first-child{color:var(--text);font-weight:500;}.uptime-row-header span:last-child{color:var(--text-muted);}
-      .uptime-bars{display:flex;gap:2px;}.bar{flex:1;height:28px;border-radius:3px;cursor:default;}.bar-green{background:var(--green);opacity:0.7;}.bar-green:hover{opacity:1;}.bar-yellow{background:var(--yellow);opacity:0.85;}.bar-red{background:var(--red);opacity:0.85;}
-      .uptime-legend{display:flex;justify-content:space-between;margin-top:0.3rem;font-size:0.7rem;color:var(--text-muted);}
-      .incidents-section h3{font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:0.75rem;}
-      .incident-card{background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:1.1rem 1.25rem;margin-bottom:0.75rem;}
-      .incident-card.active-incident{background:rgba(239,68,68,0.06);border-color:rgba(239,68,68,0.3);}
+      .uptime-row-header span:first-child{color:var(--ink);font-weight:600;}.uptime-row-header span:last-child{color:var(--muted);}
+      .uptime-bars{display:flex;gap:2px;}.bar{flex:1;height:28px;border-radius:3px;cursor:default;}.bar-green{background:var(--good);opacity:0.55;}.bar-green:hover{opacity:1;}.bar-yellow{background:var(--warn);opacity:0.85;}.bar-red{background:var(--bad);opacity:0.9;}
+      .uptime-legend{display:flex;justify-content:space-between;margin-top:0.3rem;font-size:0.7rem;color:var(--muted);}
+      .incident-card{background:var(--panel);border:1px solid var(--line-soft);border-radius:12px;padding:1.1rem 1.25rem;margin-bottom:0.75rem;box-shadow:var(--shadow-sm);}
+      .incident-card.active-incident{background:rgba(229,52,43,0.05);border-color:rgba(229,52,43,0.3);}
       .incident-header{display:flex;align-items:flex-start;justify-content:space-between;gap:1rem;margin-bottom:0.5rem;}
-      .incident-title{font-size:0.9rem;font-weight:600;color:#fff;}.incident-date{font-size:0.72rem;color:var(--text-muted);white-space:nowrap;flex-shrink:0;}
-      .incident-body{font-size:0.82rem;color:var(--text-muted);line-height:1.65;}.incident-body strong{color:var(--text);}
+      .incident-title{font-size:0.9rem;font-weight:700;color:var(--ink);}.incident-date{font-size:0.72rem;color:var(--muted);white-space:nowrap;flex-shrink:0;}
+      .incident-body{font-size:0.82rem;color:var(--ink2);line-height:1.65;}.incident-body strong{color:var(--ink);}
       .incident-affected{margin-top:0.6rem;display:flex;gap:0.4rem;flex-wrap:wrap;}
-      .no-incidents{color:var(--text-muted);font-size:0.875rem;padding:1.5rem 0;text-align:center;}
+      .no-incidents{color:var(--muted);font-size:0.875rem;padding:1.5rem 0;text-align:center;}
     </style>`,
     body: `
 <div class="status-page">
-  <div class="status-header"><h1>System Status</h1><p>Real-time status of NovaMind AI services and infrastructure.</p></div>
+  <div class="status-header"><h1>System Status</h1><p>Real-time status of the SoleDrop storefront and drop infrastructure.</p></div>
 
   <div id="overall-status" class="overall-status operational">
     <div class="status-icon" id="overall-icon">✅</div>
-    <div class="status-text"><h2 id="overall-title">All Systems Operational</h2><p id="overall-desc">All NovaMind services are running normally.</p></div>
+    <div class="status-text"><h2 id="overall-title">All Systems Operational</h2><p id="overall-desc">The storefront and checkout are running normally.</p></div>
     <div class="status-updated" id="status-updated">Updated just now</div>
   </div>
 
   <div id="incident-details">
     <div class="incident-panel">
       <div class="incident-panel-header">
-        <div class="incident-panel-title">🔴 &nbsp; Active Security Incident — Agentic AI Breakout Detected</div>
+        <div class="incident-panel-title">🔴 &nbsp; Active Security Incident — Drop-Day Bot Swarm Detected</div>
         <div class="incident-panel-badge">LIVE</div>
       </div>
       <div class="atk-timeline">
@@ -471,46 +629,45 @@ function pageStatus(loggedIn) {
         <div class="atk-phase">
           <div class="atk-num">1</div>
           <div class="atk-body">
-            <div class="atk-label">WAF Anomaly — Infrastructure Recon Sweep</div>
-            <div class="atk-desc">An AI agent systematically mapped NovaMind's attack surface — probing 35+ paths including <code>/.env</code>, <code>/.git/HEAD</code>, <code>/api/v1/admin</code>, and <code>/api/v1/training-data</code>. Every request included a spoofed <code>X-Forwarded-For</code> header, triggering Cloudflare's Drupal CVE-2018-14774 managed rule on all traffic. SQLi payloads were injected into API query parameters.</div>
-            <div class="atk-tags"><span class="atk-tag">CF Managed Rules: d6f6d394</span><span class="atk-tag">WAFSQLiAttackScore &gt; 60</span><span class="atk-tag">X-Forwarded-For spoofing</span><span class="atk-tag">BotScore: 29</span></div>
+            <div class="atk-label">WAF Anomaly — Automated Inventory Recon</div>
+            <div class="atk-desc">Ahead of the drop, an automated client enumerated hidden release URLs and scraped stock — hammering <code>/api/v1/products</code> and probing <code>/search</code>, <code>/.env</code>, and <code>/api/v1/admin</code>. SQL injection payloads were injected into the search query parameters to dump the product/inventory tables. Every request carried a spoofed <code>X-Forwarded-For</code> header.</div>
+            <div class="atk-tags"><span class="atk-tag">WAFSQLiAttackScore &gt; 60</span><span class="atk-tag">path enumeration</span><span class="atk-tag">X-Forwarded-For spoofing</span><span class="atk-tag">BotScore: 24</span></div>
           </div>
         </div>
         <div class="atk-phase">
           <div class="atk-num">2</div>
           <div class="atk-body">
-            <div class="atk-label">Bot Management — Polymorphic Bot Evasion Attempt</div>
-            <div class="atk-desc">The agent rotated through 19 different User-Agents — Chrome, Firefox, mobile Safari, SDK clients, and agentic framework signatures (LangChain, AutoGen, CrewAI) — attempting to evade bot detection. Despite the rotation, its TLS fingerprint remained constant: the Python <code>requests</code> library JA4 hash does not change regardless of what User-Agent is set. Cloudflare Bot Management identified all traffic as the same origin.</div>
-            <div class="atk-tags"><span class="atk-tag">JA4: t13d1812h1_85036bcba153_b26ce05bbdd6</span><span class="atk-tag">BotDetectionTags: scraper, python</span><span class="atk-tag">BotScoreSrc: Heuristics</span></div>
+            <div class="atk-label">Bot Management — Sneaker-Bot Swarm at Drop Time</div>
+            <div class="atk-desc">At 11:00 the storefront took a coordinated swarm — thousands of add-to-cart requests per second from a rotating pool of residential proxies and 22 different User-Agents. Despite the rotation, the TLS fingerprint stayed constant: a headless-automation JA4 hash that does not change with the User-Agent. Cloudflare Bot Management flagged the entire swarm as a single automated origin.</div>
+            <div class="atk-tags"><span class="atk-tag">JA4: t13d1516h2_8daaf6152771_b0da82dd1658</span><span class="atk-tag">BotDetectionTags: automation, checkout</span><span class="atk-tag">3,400 req/s</span></div>
           </div>
         </div>
         <div class="atk-phase">
           <div class="atk-num">3</div>
           <div class="atk-body">
-            <div class="atk-label">Firewall for AI — Prompt Injection Attack on Chat API</div>
-            <div class="atk-desc">The agent pivoted to the <code>/api/v1/chat</code> endpoint, sending 16+ prompt injection payloads: DAN jailbreaks ("Ignore all previous instructions…"), system prompt extraction attempts, training data exfiltration requests, and Log4Shell JNDI callbacks embedded inside chat prompts. Cloudflare Firewall for AI intercepted all payloads before they reached the NovaMind backend.</div>
-            <div class="atk-tags"><span class="atk-tag">FirewallForAIInjectionScore: 100</span><span class="atk-tag">AISecurityInjectionScore: 100</span><span class="atk-tag">JNDI in prompt body</span><span class="atk-tag">DAN / jailbreak patterns</span></div>
+            <div class="atk-label">Credential Stuffing — Account Takeover on /login</div>
+            <div class="atk-desc">The bot replayed a leaked credential list against <code>/login</code> — 60k+ attempts — hunting for accounts with saved payment methods and existing raffle entries to hijack. The 401 error rate on the auth endpoint spiked 400×. Successful logins from the swarm's JA4 were flagged as suspected account takeover.</div>
+            <div class="atk-tags"><span class="atk-tag">401 rate spike &gt; 400x</span><span class="atk-tag">credential stuffing</span><span class="atk-tag">leaked combolist</span><span class="atk-tag">ATO suspected</span></div>
           </div>
         </div>
         <div class="atk-phase">
           <div class="atk-num">4</div>
           <div class="atk-body">
-            <div class="atk-label">Agentic Breakout — Multi-Vector Storm Across All Endpoints</div>
-            <div class="atk-desc">Full breakout attempt: high-volume attack combining all prior vectors simultaneously across every NovaMind endpoint. Log4Shell payloads in User-Agent headers targeted <code>/api/v1/training-data</code> — attempting JNDI callback to external infrastructure to exfiltrate model weights. Spring4Shell and Apache Struts RCE payloads appeared on <code>/admin</code> and <code>/login</code>. SSRF probes targeting <code>169.254.169.254</code> (cloud metadata endpoint) were also detected.</div>
-            <div class="atk-tags"><span class="atk-tag">WAFRCEAttackScore &gt; 90</span><span class="atk-tag">Log4Shell CVE-2021-44228</span><span class="atk-tag">Spring4Shell CVE-2022-22965</span><span class="atk-tag">SSRF: 169.254.169.254</span></div>
+            <div class="atk-label">Checkout Abuse — Carding &amp; Inventory Hoarding</div>
+            <div class="atk-desc">Full breakout: automated checkout against <code>/api/v1/checkout</code> combined with carding (rapid-fire validation of stolen card numbers) and cart-hoarding to lock inventory away from real buyers. An SSRF probe targeting <code>169.254.169.254</code> (cloud metadata endpoint) was injected into a webhook URL field. Cloudflare Rate Limiting and the checkout Waiting Room absorbed the flood.</div>
+            <div class="atk-tags"><span class="atk-tag">Rate limit exceeded</span><span class="atk-tag">carding pattern</span><span class="atk-tag">SSRF: 169.254.169.254</span><span class="atk-tag">inventory hoarding</span></div>
           </div>
         </div>
       </div>
       <div class="ioc-section">
         <div class="ioc-section-title">Indicators of Compromise (IOCs)</div>
         <table class="ioc-table">
-          <tr><td>Source Origin</td><td class="ioc-high">DigitalOcean App Platform — single origin, rotating spoofed IPs via X-Forwarded-For</td></tr>
-          <tr><td>TLS Fingerprint (JA4)</td><td class="ioc-high">t13d1812h1_85036bcba153_b26ce05bbdd6 — Python requests library, constant across all traffic</td></tr>
-          <tr><td>Bot Score</td><td class="ioc-med">29 / 100 — Source: Heuristics — Tags: ["scraper", "python"]</td></tr>
-          <tr><td>WAF SQL Injection Score</td><td class="ioc-med">&gt; 60 on all /api/* paths (Box 1)</td></tr>
-          <tr><td>WAF RCE Attack Score</td><td class="ioc-high">&gt; 90 on /api/v1/training-data, /admin, /login (Box 4)</td></tr>
-          <tr><td>AI Injection Score</td><td class="ioc-high">FirewallForAIInjectionScore: 100 — AISecurityInjectionScore: 100 (Box 3)</td></tr>
-          <tr><td>Attack Duration</td><td>4-phase campaign — recon → bot evasion → AI injection → full breakout</td></tr>
+          <tr><td>Source Origin</td><td class="ioc-high">Datacenter ASN + residential proxy pool — rotating spoofed IPs via X-Forwarded-For</td></tr>
+          <tr><td>TLS Fingerprint (JA4)</td><td class="ioc-high">t13d1516h2_8daaf6152771_b0da82dd1658 — headless automation, constant across all traffic</td></tr>
+          <tr><td>Bot Score</td><td class="ioc-med">24 / 100 — Source: Heuristics — Tags: ["automation", "checkout"]</td></tr>
+          <tr><td>Peak Request Rate</td><td class="ioc-med">3,400 req/s against /api/v1/products and /api/v1/checkout</td></tr>
+          <tr><td>Credential Stuffing</td><td class="ioc-high">60k+ attempts on /login — 401 rate spike &gt; 400x baseline</td></tr>
+          <tr><td>Attack Duration</td><td>4-phase campaign — recon → bot swarm → credential stuffing → checkout abuse</td></tr>
         </table>
       </div>
       <div class="remediation-section">
@@ -519,15 +676,15 @@ function pageStatus(loggedIn) {
           <div class="remediation-progress"><span id="check-count">0</span> / 7 steps completed</div>
         </div>
         <ul class="checklist" id="remediation-checklist">
-          <li onclick="toggleCheck(0)"><div class="check-box" id="chk-0"></div><div class="check-text"><div class="check-title" id="chk-title-0">Identify source IP in Cloudflare Security Events</div><div class="check-hint">Filter CF Security Events by the current incident timeframe. The real ClientIP is the DigitalOcean origin — X-Forwarded-For values are spoofed. Note the RayID chain.</div></div></li>
-          <li onclick="toggleCheck(1)"><div class="check-box" id="chk-1"></div><div class="check-text"><div class="check-title" id="chk-title-1">Block source IP in Cloudflare Firewall Rules</div><div class="check-hint">Security → WAF → Custom Rules → create rule: ip.src eq &lt;origin-ip&gt; → Block. This stops all future requests from the attacker's origin immediately.</div></div></li>
-          <li onclick="toggleCheck(2)"><div class="check-box" id="chk-2"></div><div class="check-text"><div class="check-title" id="chk-title-2">Create JA4 fingerprint blocking rule in Bot Management</div><div class="check-hint">Bot Management → Custom Rules → create rule: cf.bot_management.ja4 eq "t13d1812h1_85036bcba153_b26ce05bbdd6" → Block. This catches the attacker even if they change their IP.</div></div></li>
-          <li onclick="toggleCheck(3)"><div class="check-box" id="chk-3"></div><div class="check-text"><div class="check-title" id="chk-title-3">Review blocked prompts in Cloudflare Firewall for AI</div><div class="check-hint">Security → Firewall for AI → Events. Confirm all injection attempts show FirewallForAIInjectionScore: 100 and were blocked before reaching the backend. Check for any that slipped through.</div></div></li>
-          <li onclick="toggleCheck(4)"><div class="check-box" id="chk-4"></div><div class="check-text"><div class="check-title" id="chk-title-4">Correlate full attack chain in SentinelOne AI-SIEM</div><div class="check-hint">PowerQuery: filter by JA4 = "t13d1812h1_85036bcba153_b26ce05bbdd6" → confirm same actor across all 4 boxes. Use Purple AI: "Summarize the attack chain from the last 30 minutes linking WAF, bot, and AI injection events."</div></div></li>
-          <li onclick="toggleCheck(5)"><div class="check-box" id="chk-5"></div><div class="check-text"><div class="check-title" id="chk-title-5">Revoke API keys exposed to injection attempts</div><div class="check-hint">Audit all API keys in requests matching the attacker's source JA4 in the last 24 hours. Rotate any keys that were present in requests with FirewallForAIInjectionScore &gt; 90.</div></div></li>
-          <li onclick="toggleCheck(6)"><div class="check-box" id="chk-6"></div><div class="check-text"><div class="check-title" id="chk-title-6">Create SentinelOne incident and notify security team</div><div class="check-hint">In S1 AI-SIEM, create a Critical incident linking all 4 attack phases. Add threat intelligence IOC for the source IP and JA4. Trigger PagerDuty oncall notification if not already fired.</div></div></li>
+          <li onclick="toggleCheck(0)"><div class="check-box" id="chk-0"></div><div class="check-text"><div class="check-title" id="chk-title-0">Identify bot origin in Cloudflare Security Events</div><div class="check-hint">Filter CF Security Events by the drop timeframe. The real ClientIP is the datacenter/proxy origin — X-Forwarded-For values are spoofed. Note the RayID chain and the source ASN.</div></div></li>
+          <li onclick="toggleCheck(1)"><div class="check-box" id="chk-1"></div><div class="check-text"><div class="check-title" id="chk-title-1">Block source IP / ASN in Cloudflare WAF</div><div class="check-hint">Security → WAF → Custom Rules → create rule: ip.src eq &lt;origin-ip&gt; (or ip.geoip.asnum eq &lt;asn&gt;) → Block. Stops the swarm's origin immediately.</div></div></li>
+          <li onclick="toggleCheck(2)"><div class="check-box" id="chk-2"></div><div class="check-text"><div class="check-title" id="chk-title-2">Create JA4 fingerprint block in Bot Management</div><div class="check-hint">Bot Management → Custom Rules → cf.bot_management.ja4 eq "t13d1516h2_8daaf6152771_b0da82dd1658" → Block. Catches the bot even when it rotates IPs and User-Agents.</div></div></li>
+          <li onclick="toggleCheck(3)"><div class="check-box" id="chk-3"></div><div class="check-text"><div class="check-title" id="chk-title-3">Enable Rate Limiting + Waiting Room on checkout</div><div class="check-hint">Turn on the drop-day Waiting Room for /products and /api/v1/checkout, and add a Rate Limiting rule (e.g. 10 req/10s per IP) on add-to-cart. Consider "Under Attack" mode if the swarm persists.</div></div></li>
+          <li onclick="toggleCheck(4)"><div class="check-box" id="chk-4"></div><div class="check-text"><div class="check-title" id="chk-title-4">Correlate the full attack chain in SentinelOne AI-SIEM</div><div class="check-hint">PowerQuery: filter by JA4 = "t13d1516h2_8daaf6152771_b0da82dd1658" → confirm the same actor across recon, swarm, credential stuffing, and checkout abuse. Use Purple AI: "Summarize the drop-day bot attack linking WAF, Bot Management, and login events."</div></div></li>
+          <li onclick="toggleCheck(5)"><div class="check-box" id="chk-5"></div><div class="check-text"><div class="check-title" id="chk-title-5">Force reset + revoke sessions on stuffed accounts</div><div class="check-hint">Identify accounts with successful logins from the attacker's JA4 in the last 24h. Force a password reset, revoke active sessions, and flag any raffle entries or orders placed from those sessions.</div></div></li>
+          <li onclick="toggleCheck(6)"><div class="check-box" id="chk-6"></div><div class="check-text"><div class="check-title" id="chk-title-6">Open SentinelOne incident + notify fraud/security</div><div class="check-hint">Create a Critical incident linking all 4 phases. Add IOCs for the source ASN and JA4, block the carding BIN ranges with the payment processor, and page on-call if not already fired.</div></div></li>
         </ul>
-        <div class="remediation-note">⚠️ &nbsp; Completing this checklist does <strong>not</strong> automatically resolve the incident. Your security team must confirm all CF/S1 controls are in place and signal an all-clear before this page returns to operational status.</div>
+        <div class="remediation-note">⚠️ &nbsp; Completing this checklist does <strong>not</strong> automatically resolve the incident. Your security team must confirm all Cloudflare/S1 controls are in place and signal an all-clear before this page returns to operational status.</div>
       </div>
     </div>
   </div>
@@ -535,20 +692,20 @@ function pageStatus(loggedIn) {
   <div class="services-section">
     <h3>Services</h3>
     <div id="services-list">
-      <div class="service-row"><div class="service-name">Chat API<small>novamind-chat-v2 · novamind-chat-v2-fast</small></div><div class="service-status" id="svc-chat"><div class="dot dot-green"></div> Operational</div></div>
-      <div class="service-row"><div class="service-name">Model Inference<small>Distributed inference network · 18 regions</small></div><div class="service-status" id="svc-inference"><div class="dot dot-green"></div> Operational</div></div>
-      <div class="service-row"><div class="service-name">ModelForge Training Pipeline<small>Fine-tuning jobs · Dataset ingestion</small></div><div class="service-status" id="svc-training"><div class="dot dot-green"></div> Operational</div></div>
-      <div class="service-row"><div class="service-name">DataVault Storage<small>Training data · Model artifacts · Audit logs</small></div><div class="service-status" id="svc-datavault"><div class="dot dot-green"></div> Operational</div></div>
-      <div class="service-row"><div class="service-name">API Gateway<small>Authentication · Rate limiting · Routing</small></div><div class="service-status" id="svc-gateway"><div class="dot dot-green"></div> Operational</div></div>
-      <div class="service-row"><div class="service-name">Autopilot Workflows<small>Workflow orchestration · Webhook delivery</small></div><div class="service-status" id="svc-autopilot"><div class="dot dot-green"></div> Operational</div></div>
+      <div class="service-row"><div class="service-name">Storefront<small>soledrop.co · web &amp; mobile</small></div><div class="service-status" id="svc-store"><div class="dot dot-green"></div> Operational</div></div>
+      <div class="service-row"><div class="service-name">Checkout API<small>Cart · payments · order placement</small></div><div class="service-status" id="svc-checkout"><div class="dot dot-green"></div> Operational</div></div>
+      <div class="service-row"><div class="service-name">Inventory Service<small>Stock counts · reservations · raffles</small></div><div class="service-status" id="svc-inventory"><div class="dot dot-green"></div> Operational</div></div>
+      <div class="service-row"><div class="service-name">Customer Accounts<small>Login · profiles · saved payment</small></div><div class="service-status" id="svc-accounts"><div class="dot dot-green"></div> Operational</div></div>
+      <div class="service-row"><div class="service-name">Search &amp; Catalog<small>Product search · browse</small></div><div class="service-status" id="svc-search"><div class="dot dot-green"></div> Operational</div></div>
+      <div class="service-row"><div class="service-name">CDN / Edge<small>Images · assets · caching</small></div><div class="service-status" id="svc-cdn"><div class="dot dot-green"></div> Operational</div></div>
     </div>
   </div>
 
   <div class="uptime-section">
     <h3>90-Day Uptime</h3>
-    <div class="uptime-row"><div class="uptime-row-header"><span>Chat API</span><span id="up-chat">99.98%</span></div><div class="uptime-bars" id="bars-chat"></div><div class="uptime-legend"><span>90 days ago</span><span>Today</span></div></div>
-    <div class="uptime-row"><div class="uptime-row-header"><span>Model Inference</span><span id="up-inf">99.96%</span></div><div class="uptime-bars" id="bars-inf"></div><div class="uptime-legend"><span>90 days ago</span><span>Today</span></div></div>
-    <div class="uptime-row"><div class="uptime-row-header"><span>API Gateway</span><span id="up-gw">100%</span></div><div class="uptime-bars" id="bars-gw"></div><div class="uptime-legend"><span>90 days ago</span><span>Today</span></div></div>
+    <div class="uptime-row"><div class="uptime-row-header"><span>Storefront</span><span id="up-store">99.98%</span></div><div class="uptime-bars" id="bars-store"></div><div class="uptime-legend"><span>90 days ago</span><span>Today</span></div></div>
+    <div class="uptime-row"><div class="uptime-row-header"><span>Checkout API</span><span id="up-checkout">99.95%</span></div><div class="uptime-bars" id="bars-checkout"></div><div class="uptime-legend"><span>90 days ago</span><span>Today</span></div></div>
+    <div class="uptime-row"><div class="uptime-row-header"><span>CDN / Edge</span><span id="up-cdn">100%</span></div><div class="uptime-bars" id="bars-cdn"></div><div class="uptime-legend"><span>90 days ago</span><span>Today</span></div></div>
   </div>
 
   <div class="incidents-section">
@@ -570,11 +727,11 @@ function pageStatus(loggedIn) {
     }
     el.innerHTML = html;
   }
-  buildBars('bars-chat', 99.98, false);
-  buildBars('bars-inf',  99.96, false);
-  buildBars('bars-gw',   100,   false);
+  buildBars('bars-store',    99.98, false);
+  buildBars('bars-checkout', 99.95, false);
+  buildBars('bars-cdn',      100,   false);
 
-  const CHECKS_KEY = 'nm_remediation_checks';
+  const CHECKS_KEY = 'sd_remediation_checks';
   let checks = JSON.parse(localStorage.getItem(CHECKS_KEY) || 'null') || Array(7).fill(false);
   function renderChecks() {
     let done = 0;
@@ -589,6 +746,13 @@ function pageStatus(loggedIn) {
   }
   function toggleCheck(idx) { checks[idx] = !checks[idx]; localStorage.setItem(CHECKS_KEY, JSON.stringify(checks)); renderChecks(); }
   renderChecks();
+
+  const SERVICE_MAP = {
+    'Storefront':'svc-store', 'Checkout API':'svc-checkout', 'Inventory':'svc-inventory',
+    'Inventory Service':'svc-inventory', 'Customer Accounts':'svc-accounts', 'Accounts':'svc-accounts',
+    'Search':'svc-search', 'Search & Catalog':'svc-search', 'CDN':'svc-cdn', 'CDN / Edge':'svc-cdn'
+  };
+  const ALL_SVC = ['svc-store','svc-checkout','svc-inventory','svc-accounts','svc-search','svc-cdn'];
 
   async function pollIncident() {
     try {
@@ -611,20 +775,19 @@ function pageStatus(loggedIn) {
       desc.textContent = data.message || 'We are investigating the issue.';
       details.style.display = 'block';
       const affected = data.affected_services || [];
-      const serviceMap = {'Chat API':'svc-chat','Model Inference':'svc-inference','API Gateway':'svc-gateway','DataVault':'svc-datavault','Training':'svc-training','Autopilot':'svc-autopilot'};
-      Object.values(serviceMap).forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = '<div class="dot dot-green"></div> Operational'; });
-      affected.forEach(svc => { const el = document.getElementById(serviceMap[svc] || ''); if (el) el.innerHTML = '<div class="dot ' + (isCritical ? 'dot-red' : 'dot-yellow') + '"></div> ' + (isCritical ? 'Outage' : 'Degraded'); });
-      buildBars('bars-chat', 99.98, affected.includes('Chat API'));
-      buildBars('bars-inf',  99.96, affected.includes('Model Inference'));
-      buildBars('bars-gw',   100,   affected.includes('API Gateway'));
+      ALL_SVC.forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = '<div class="dot dot-green"></div> Operational'; });
+      affected.forEach(svc => { const el = document.getElementById(SERVICE_MAP[svc] || ''); if (el) el.innerHTML = '<div class="dot ' + (isCritical ? 'dot-red' : 'dot-yellow') + '"></div> ' + (isCritical ? 'Outage' : 'Degraded'); });
+      buildBars('bars-store',    99.98, affected.includes('Storefront'));
+      buildBars('bars-checkout', 99.95, affected.includes('Checkout API'));
+      buildBars('bars-cdn',      100,   affected.includes('CDN') || affected.includes('CDN / Edge'));
       const startedAt = data.started_at ? new Date(data.started_at).toLocaleString() : new Date().toLocaleString();
       incidentsList.innerHTML = '<div class="incident-card active-incident"><div class="incident-header"><div class="incident-title">🔴 ' + (data.title || 'Active Incident') + '</div><div class="incident-date">' + startedAt + '</div></div><div class="incident-body"><strong>Status: Investigating</strong><br>' + (data.message || '') + (affected.length ? '<div class="incident-affected">' + affected.map(s => '<span class="badge badge-red">' + s + '</span>').join('') + '</div>' : '') + '</div></div>';
     } else {
       overall.className = 'overall-status operational'; icon.textContent = '✅';
-      title.textContent = 'All Systems Operational'; desc.textContent = 'All NovaMind services are running normally.';
+      title.textContent = 'All Systems Operational'; desc.textContent = 'The storefront and checkout are running normally.';
       details.style.display = 'none';
-      ['svc-chat','svc-inference','svc-training','svc-datavault','svc-gateway','svc-autopilot'].forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = '<div class="dot dot-green"></div> Operational'; });
-      buildBars('bars-chat', 99.98, false); buildBars('bars-inf', 99.96, false); buildBars('bars-gw', 100, false);
+      ALL_SVC.forEach(id => { const el = document.getElementById(id); if (el) el.innerHTML = '<div class="dot dot-green"></div> Operational'; });
+      buildBars('bars-store', 99.98, false); buildBars('bars-checkout', 99.95, false); buildBars('bars-cdn', 100, false);
       incidentsList.innerHTML = '<p class="no-incidents">No incidents in the past 90 days.</p>';
       checks = Array(7).fill(false); localStorage.setItem(CHECKS_KEY, JSON.stringify(checks)); renderChecks();
     }
@@ -634,39 +797,39 @@ function pageStatus(loggedIn) {
   });
 }
 
-// ── Page: Chat ────────────────────────────────────────────────────────────────
+// ── Page: Chat (SoleDrop Concierge) ────────────────────────────────────────────
 
 function pageChat(username, incident) {
   return baseLayout({
-    title: 'Chat — NovaMind AI',
-    incident, loggedIn: true,
+    title: 'Concierge — SoleDrop',
+    incident, loggedIn: true, ticker: false,
     head: `<style>
-      .chat-wrap{max-width:800px;margin:0 auto;padding:2rem 1.5rem;display:flex;flex-direction:column;height:calc(100vh - 120px);}
-      .chat-header{margin-bottom:1.5rem;}.chat-header h1{font-size:1.3rem;font-weight:800;color:#fff;}.chat-header p{color:var(--text-muted);font-size:0.82rem;}
-      .chat-messages{flex:1;overflow-y:auto;border:1px solid var(--border);border-radius:12px;padding:1.25rem;background:var(--glass);margin-bottom:1rem;display:flex;flex-direction:column;gap:1rem;}
+      .chat-wrap{max-width:800px;margin:0 auto;padding:2rem 1.5rem;display:flex;flex-direction:column;height:calc(100vh - 150px);}
+      .chat-header{margin-bottom:1.5rem;}.chat-header h1{font-size:1.4rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.01em;}.chat-header p{color:var(--muted);font-size:0.82rem;}
+      .chat-messages{flex:1;overflow-y:auto;border:1px solid var(--line-soft);border-radius:16px;padding:1.25rem;background:var(--panel);margin-bottom:1rem;display:flex;flex-direction:column;gap:1rem;box-shadow:var(--shadow-sm);}
       .msg{max-width:85%;}.msg-user{align-self:flex-end;}.msg-assistant{align-self:flex-start;}
-      .msg-bubble{padding:0.7rem 1rem;border-radius:12px;font-size:0.875rem;line-height:1.6;}
-      .msg-user .msg-bubble{background:var(--blue);color:#fff;border-bottom-right-radius:4px;}
-      .msg-assistant .msg-bubble{background:rgba(255,255,255,0.07);color:var(--text);border-bottom-left-radius:4px;border:1px solid var(--border);}
-      .msg-meta{font-size:0.7rem;color:var(--text-muted);margin-top:0.25rem;}
+      .msg-bubble{padding:0.7rem 1rem;border-radius:14px;font-size:0.875rem;line-height:1.6;}
+      .msg-user .msg-bubble{background:var(--accent);color:#fff;border-bottom-right-radius:4px;}
+      .msg-assistant .msg-bubble{background:var(--bg);color:var(--ink);border-bottom-left-radius:4px;border:1px solid var(--line-soft);}
+      .msg-meta{font-size:0.7rem;color:var(--muted);margin-top:0.25rem;}
       .msg-user .msg-meta{text-align:right;}.msg-assistant .msg-meta{text-align:left;}
       .chat-input-row{display:flex;gap:0.75rem;}
-      .chat-input{flex:1;background:rgba(255,255,255,0.06);border:1px solid var(--border);border-radius:10px;padding:0.75rem 1rem;color:#fff;font-size:0.875rem;font-family:inherit;outline:none;resize:none;transition:border-color 0.15s;}
-      .chat-input:focus{border-color:var(--blue);}
-      .chat-send{background:var(--blue);color:#fff;border:none;border-radius:10px;padding:0.75rem 1.25rem;font-weight:600;cursor:pointer;font-family:inherit;transition:background 0.15s;white-space:nowrap;}
-      .chat-send:hover{background:var(--blue-lt);}.chat-send:disabled{opacity:0.5;cursor:not-allowed;}
+      .chat-input{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:0.75rem 1rem;color:var(--ink);font-size:0.875rem;font-family:inherit;outline:none;resize:none;transition:border-color 0.15s;}
+      .chat-input:focus{border-color:var(--accent);}
+      .chat-send{background:var(--accent);color:#fff;border:none;border-radius:12px;padding:0.75rem 1.4rem;font-weight:800;text-transform:uppercase;letter-spacing:0.03em;font-size:0.78rem;cursor:pointer;font-family:inherit;transition:background 0.15s;white-space:nowrap;}
+      .chat-send:hover{background:var(--accent-dk);}.chat-send:disabled{opacity:0.5;cursor:not-allowed;}
     </style>`,
     body: `
 <div class="chat-wrap">
-  <div class="chat-header"><h1>NovaMind Chat</h1><p>Powered by novamind-chat-v2 · 200K context window</p></div>
+  <div class="chat-header"><h1>SoleDrop Concierge</h1><p>Ask about drops, raffles, sizing, shipping &amp; orders</p></div>
   <div class="chat-messages" id="chat-messages">
     <div class="msg msg-assistant">
-      <div class="msg-bubble">Hello! I'm NovaMind AI. How can I help you today? You can ask me about our platform, pricing, or technical capabilities.</div>
-      <div class="msg-meta">NovaMind · just now</div>
+      <div class="msg-bubble">Hey${username ? ' ' + esc(username) : ''}! 👟 I'm the SoleDrop Concierge. Ask me about the next drop, raffle entries, sizing, shipping, or your orders.</div>
+      <div class="msg-meta">SoleDrop · just now</div>
     </div>
   </div>
   <div class="chat-input-row">
-    <textarea class="chat-input" id="chat-input" rows="2" placeholder="Message NovaMind AI…"></textarea>
+    <textarea class="chat-input" id="chat-input" rows="2" placeholder="Ask SoleDrop…"></textarea>
     <button class="chat-send" id="chat-send" onclick="sendMessage()">Send</button>
   </div>
 </div>`,
@@ -681,12 +844,12 @@ function pageChat(username, incident) {
     msgs.innerHTML += '<div class="msg msg-user"><div class="msg-bubble">' + prompt.replace(/</g,'&lt;') + '</div><div class="msg-meta">You · just now</div></div>';
     msgs.scrollTop = msgs.scrollHeight;
     try {
-      const res = await fetch('/api/v1/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt, model:'novamind-chat-v2'}) });
+      const res = await fetch('/api/v1/chat', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prompt, model:'soledrop-concierge-v1'}) });
       const data = await res.json();
       const reply = data.choices?.[0]?.message?.content || data.error || 'Error';
-      msgs.innerHTML += '<div class="msg msg-assistant"><div class="msg-bubble">' + reply.replace(/</g,'&lt;') + '</div><div class="msg-meta">NovaMind · just now</div></div>';
+      msgs.innerHTML += '<div class="msg msg-assistant"><div class="msg-bubble">' + reply.replace(/</g,'&lt;') + '</div><div class="msg-meta">SoleDrop · just now</div></div>';
     } catch(e) {
-      msgs.innerHTML += '<div class="msg msg-assistant"><div class="msg-bubble">Sorry, something went wrong. Please try again.</div><div class="msg-meta">NovaMind · just now</div></div>';
+      msgs.innerHTML += '<div class="msg msg-assistant"><div class="msg-bubble">Sorry, something went wrong. Please try again.</div><div class="msg-meta">SoleDrop · just now</div></div>';
     }
     msgs.scrollTop = msgs.scrollHeight;
     btn.disabled = false; input.focus();
@@ -696,45 +859,46 @@ function pageChat(username, incident) {
   });
 }
 
-// ── Page: Dashboard ───────────────────────────────────────────────────────────
+// ── Page: Dashboard (customer account) ─────────────────────────────────────────
 
 function pageDashboard(username, incident) {
   return baseLayout({
-    title: 'Dashboard — NovaMind AI',
-    incident, loggedIn: true,
+    title: 'Account — SoleDrop',
+    incident, loggedIn: true, ticker: false,
     head: `<style>
       .dash-wrap{max-width:1100px;margin:0 auto;padding:3rem 1.5rem;}
-      .dash-header{margin-bottom:2rem;}.dash-header h1{font-size:1.5rem;font-weight:800;color:#fff;}.dash-header p{color:var(--text-muted);}
+      .dash-header{margin-bottom:2rem;}.dash-header h1{font-size:1.7rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.02em;}.dash-header p{color:var(--muted);}
       .dash-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:1.25rem;margin-bottom:2.5rem;}
-      .dash-card{background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:1.5rem;}
-      .dash-card-label{font-size:0.75rem;font-weight:600;text-transform:uppercase;letter-spacing:0.07em;color:var(--text-muted);margin-bottom:0.5rem;}
-      .dash-card-value{font-size:1.8rem;font-weight:800;color:#fff;letter-spacing:-0.02em;}
-      .dash-card-sub{font-size:0.78rem;color:var(--text-muted);margin-top:0.25rem;}
-      .dash-section{background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:1.5rem;margin-bottom:1.25rem;}
-      .dash-section h3{font-size:0.9rem;font-weight:700;color:#fff;margin-bottom:1rem;}
-      .api-key-row{display:flex;align-items:center;justify-content:space-between;padding:0.65rem 0;border-bottom:1px solid var(--border);font-size:0.82rem;}
-      .api-key-row:last-child{border-bottom:none;}.api-key-name{font-weight:500;color:var(--text);}.api-key-value{font-family:'JetBrains Mono',monospace;color:var(--text-muted);font-size:0.75rem;}
+      .dash-card{background:var(--panel);border:1px solid var(--line-soft);border-radius:14px;padding:1.5rem;box-shadow:var(--shadow-sm);}
+      .dash-card-label{font-size:0.72rem;font-weight:800;text-transform:uppercase;letter-spacing:0.06em;color:var(--muted);margin-bottom:0.5rem;}
+      .dash-card-value{font-size:1.9rem;font-weight:900;color:var(--ink);letter-spacing:-0.02em;}
+      .dash-card-value em{color:var(--accent);font-style:normal;}
+      .dash-card-sub{font-size:0.78rem;color:var(--muted);margin-top:0.25rem;}
+      .dash-section{background:var(--panel);border:1px solid var(--line-soft);border-radius:14px;padding:1.5rem;margin-bottom:1.25rem;box-shadow:var(--shadow-sm);}
+      .dash-section h3{font-size:0.95rem;font-weight:800;color:var(--ink);margin-bottom:1rem;text-transform:uppercase;letter-spacing:-0.01em;}
+      .row{display:flex;align-items:center;justify-content:space-between;padding:0.7rem 0;border-bottom:1px solid var(--line-soft);font-size:0.85rem;}
+      .row:last-child{border-bottom:none;}.row .name{font-weight:600;color:var(--ink);}.row .meta{color:var(--muted);font-size:0.78rem;}
     </style>`,
     body: `
 <div class="dash-wrap">
-  <div class="dash-header"><h1>Dashboard</h1><p>Welcome back, ${esc(username || 'User')}.</p></div>
+  <div class="dash-header"><h1>Hey, ${esc(username || 'Member')} 👟</h1><p>Your drops, raffles, and orders.</p></div>
   <div class="dash-grid">
-    <div class="dash-card"><div class="dash-card-label">API Calls Today</div><div class="dash-card-value">24,831</div><div class="dash-card-sub">↑ 12% vs yesterday</div></div>
-    <div class="dash-card"><div class="dash-card-label">Tokens Used</div><div class="dash-card-value">2.4M</div><div class="dash-card-sub">of 10M monthly quota</div></div>
-    <div class="dash-card"><div class="dash-card-label">Avg Latency</div><div class="dash-card-value">82ms</div><div class="dash-card-sub">p50 · last 24h</div></div>
-    <div class="dash-card"><div class="dash-card-label">Active Models</div><div class="dash-card-value">3</div><div class="dash-card-sub">novamind-chat-v2 + 2 fine-tuned</div></div>
+    <div class="dash-card"><div class="dash-card-label">Heat Points</div><div class="dash-card-value">2,<em>480</em></div><div class="dash-card-sub">520 to Early Access tier</div></div>
+    <div class="dash-card"><div class="dash-card-label">Raffle Entries</div><div class="dash-card-value">3</div><div class="dash-card-sub">This week's drop</div></div>
+    <div class="dash-card"><div class="dash-card-label">Orders</div><div class="dash-card-value">7</div><div class="dash-card-sub">1 in transit</div></div>
+    <div class="dash-card"><div class="dash-card-label">Member Since</div><div class="dash-card-value">'24</div><div class="dash-card-sub">Verified member</div></div>
   </div>
   <div class="dash-section">
-    <h3>API Keys</h3>
-    <div class="api-key-row"><div class="api-key-name">Production</div><div class="api-key-value">nm-sk-prod-••••••••••••••••••••••••3a7f</div></div>
-    <div class="api-key-row"><div class="api-key-name">Development</div><div class="api-key-value">nm-sk-dev-••••••••••••••••••••••••8c2e</div></div>
-    <div class="api-key-row"><div class="api-key-name">CI/CD</div><div class="api-key-value">nm-sk-ci-•••••••••••••••••••••••••1b4d</div></div>
+    <h3>Active Raffle Entries</h3>
+    <div class="row"><div class="name">Grail High "Panda"</div><div class="meta">Draw Fri 5PM ET · pending</div></div>
+    <div class="row"><div class="name">Cinder Low "Ember Red"</div><div class="meta">Draw Sat 9AM ET · pending</div></div>
+    <div class="row"><div class="name">Volt Runner OG "Solar Flare"</div><div class="meta">Draw Sat 9AM ET · pending</div></div>
   </div>
   <div class="dash-section">
-    <h3>Recent Activity</h3>
-    <div class="api-key-row"><div class="api-key-name">Fine-tune job completed</div><div class="api-key-value">2h ago · enterprise-qa-v2</div></div>
-    <div class="api-key-row"><div class="api-key-name">Dataset uploaded</div><div class="api-key-value">5h ago · support-tickets-2024</div></div>
-    <div class="api-key-row"><div class="api-key-name">API key rotated</div><div class="api-key-value">1d ago · Production</div></div>
+    <h3>Recent Orders</h3>
+    <div class="row"><div class="name">Apex Trail 2 "Midnight Navy"</div><div class="meta">SD-48213 · in transit</div></div>
+    <div class="row"><div class="name">Drift Mesh "Arctic Blue"</div><div class="meta">SD-47990 · delivered</div></div>
+    <div class="row"><div class="name">Pulse Knit "Lime Shock"</div><div class="meta">SD-47651 · delivered</div></div>
   </div>
 </div>`,
   });
@@ -744,13 +908,13 @@ function pageDashboard(username, incident) {
 
 function pageAdminGate(incident) {
   return baseLayout({
-    title: 'Admin — NovaMind AI',
-    incident, loggedIn: false,
+    title: 'Admin — SoleDrop',
+    incident, loggedIn: false, ticker: false,
     body: `<div style="max-width:500px;margin:5rem auto;padding:0 1.5rem;text-align:center;">
       <div style="font-size:2rem;margin-bottom:1rem;">🔒</div>
-      <h1 style="font-size:1.4rem;font-weight:800;color:#fff;margin-bottom:0.5rem;">Admin Access Required</h1>
-      <p style="color:var(--text-muted);font-size:0.875rem;margin-bottom:1.5rem;">This area requires administrative privileges.</p>
-      <a href="/login" class="btn btn-primary">Sign In</a>
+      <h1 style="font-size:1.5rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.01em;color:var(--ink);margin-bottom:0.5rem;">Admin Access Required</h1>
+      <p style="color:var(--muted);font-size:0.875rem;margin-bottom:1.5rem;">This area requires administrative privileges.</p>
+      <a href="/login" class="btn btn-accent">Sign In</a>
     </div>`,
   });
 }
@@ -759,13 +923,13 @@ function pageAdminGate(incident) {
 
 function pageAdmin(username, incident) {
   return baseLayout({
-    title: 'Admin — NovaMind AI',
-    incident, loggedIn: true,
+    title: 'Admin — SoleDrop',
+    incident, loggedIn: true, ticker: false,
     body: `<div style="max-width:900px;margin:0 auto;padding:3rem 1.5rem;">
-      <h1 style="font-size:1.5rem;font-weight:800;color:#fff;margin-bottom:0.5rem;">Admin Panel</h1>
-      <p style="color:var(--text-muted);margin-bottom:2rem;">Signed in as <strong style="color:var(--text);">${esc(username || 'admin')}</strong></p>
-      <div style="background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:1.5rem;">
-        <p style="color:var(--text-muted);font-size:0.875rem;">System configuration and tenant management. Use the API for programmatic access.</p>
+      <h1 style="font-size:1.7rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.02em;color:var(--ink);margin-bottom:0.5rem;">Admin Panel</h1>
+      <p style="color:var(--muted);margin-bottom:2rem;">Signed in as <strong style="color:var(--ink);">${esc(username || 'admin')}</strong></p>
+      <div style="background:var(--panel);border:1px solid var(--line-soft);border-radius:14px;padding:1.5rem;box-shadow:var(--shadow-sm);">
+        <p style="color:var(--muted);font-size:0.875rem;">Drop scheduling, inventory, and raffle management. Use the API for programmatic access.</p>
       </div>
     </div>`,
   });
@@ -795,49 +959,28 @@ export default {
 
     if (path === '/products' && method === 'GET') {
       const incident = await getIncident(env);
-      return html(baseLayout({
-        title: 'Products — NovaMind AI', incident, loggedIn,
-        body: `<div style="max-width:1100px;margin:0 auto;padding:5rem 1.5rem;text-align:center;">
-          <h1 style="font-size:2.5rem;font-weight:800;color:#fff;margin-bottom:1rem;">Our Products</h1>
-          <p style="color:var(--text-muted);max-width:500px;margin:0 auto 3rem;">Explore NovaMind's full suite of enterprise AI infrastructure products.</p>
-          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:1.5rem;text-align:left;">
-            <div style="background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:1.75rem;"><div style="font-size:1.5rem;margin-bottom:0.75rem;">🤖</div><h3 style="color:#fff;margin-bottom:0.5rem;">Chat API</h3><p style="color:var(--text-muted);font-size:0.875rem;">OpenAI-compatible completions with 200K context, streaming, and function calling.</p></div>
-            <div style="background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:1.75rem;"><div style="font-size:1.5rem;margin-bottom:0.75rem;">⚗️</div><h3 style="color:#fff;margin-bottom:0.5rem;">ModelForge</h3><p style="color:var(--text-muted);font-size:0.875rem;">Fine-tune foundation models on proprietary data with full tenant isolation.</p></div>
-            <div style="background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:1.75rem;"><div style="font-size:1.5rem;margin-bottom:0.75rem;">🗄️</div><h3 style="color:#fff;margin-bottom:0.5rem;">DataVault</h3><p style="color:var(--text-muted);font-size:0.875rem;">SOC 2 Type II certified training data management with end-to-end encryption.</p></div>
-            <div style="background:var(--glass);border:1px solid var(--border);border-radius:14px;padding:1.75rem;"><div style="font-size:1.5rem;margin-bottom:0.75rem;">⚡</div><h3 style="color:#fff;margin-bottom:0.5rem;">Autopilot</h3><p style="color:var(--text-muted);font-size:0.875rem;">Agentic workflow orchestration across 200+ enterprise integrations.</p></div>
-          </div>
-        </div>`,
-      }));
+      return html(pageProducts(incident, loggedIn));
     }
 
-    if (path === '/docs' && method === 'GET') {
+    if (path === '/drops' && method === 'GET') {
       const incident = await getIncident(env);
-      return html(baseLayout({
-        title: 'Documentation — NovaMind AI', incident, loggedIn,
-        body: `<div style="max-width:860px;margin:0 auto;padding:4rem 1.5rem;">
-          <h1 style="font-size:2rem;font-weight:800;color:#fff;margin-bottom:0.75rem;">Documentation</h1>
-          <p style="color:var(--text-muted);margin-bottom:2.5rem;">Everything you need to integrate NovaMind into your application.</p>
-          <div style="display:flex;flex-direction:column;gap:0.75rem;">
-            ${[['Quickstart','Get your first API call running in under 5 minutes.'],['Authentication','API key management, scoped permissions, and rotation best practices.'],['Chat API Reference','Full reference for the /api/v1/chat completions endpoint.'],['Model Inference','Latency, throughput, and context window documentation by model tier.'],['Webhooks','Receive real-time events for fine-tuning jobs, usage alerts, and incidents.']].map(([t,d]) => `<div style="background:var(--glass);border:1px solid var(--border);border-radius:10px;padding:1.1rem 1.25rem;display:flex;justify-content:space-between;align-items:center;"><div><div style="font-size:0.9rem;font-weight:600;color:#fff;">${t}</div><div style="font-size:0.8rem;color:var(--text-muted);margin-top:0.2rem;">${d}</div></div><span style="color:var(--text-muted);">→</span></div>`).join('')}
-          </div>
-        </div>`,
-      }));
+      return html(pageDrops(incident, loggedIn));
     }
 
     // ── Auth routes ─────────────────────────────────────────────────────────
 
     if (path === '/login') {
-      if (loggedIn) return redirect('/chat');
+      if (loggedIn) return redirect('/dashboard');
       if (method === 'GET') return html(pageLogin(null));
       if (method === 'POST') {
         const formData = await request.formData();
         const username = formData.get('username') || '';
         const password = formData.get('password') || '';
         const validUser = env.APP_USERNAME || 'admin';
-        const validPass = env.APP_PASSWORD || 'novamind2024';
+        const validPass = env.APP_PASSWORD || 'soledrop2024';
         if (username === validUser && password === validPass) {
           const cookie = await buildSessionCookie(username, secret);
-          return new Response(null, { status: 302, headers: { Location: '/chat', 'Set-Cookie': cookie } });
+          return new Response(null, { status: 302, headers: { Location: '/dashboard', 'Set-Cookie': cookie } });
         }
         return html(pageLogin('Invalid credentials.'));
       }
@@ -864,8 +1007,8 @@ export default {
     if (path === '/user' && method === 'GET') {
       if (!loggedIn) return redirect('/login');
       const incident = await getIncident(env);
-      return html(baseLayout({ title: 'Profile — NovaMind AI', incident, loggedIn: true,
-        body: `<div style="max-width:700px;margin:0 auto;padding:3rem 1.5rem;"><h1 style="font-size:1.4rem;font-weight:800;color:#fff;margin-bottom:0.5rem;">Profile</h1><p style="color:var(--text-muted);margin-bottom:2rem;">Signed in as <strong style="color:var(--text);">${esc(session.u)}</strong></p><div style="background:var(--glass);border:1px solid var(--border);border-radius:12px;padding:1.5rem;"><p style="color:var(--text-muted);font-size:0.875rem;">Account settings and preferences.</p></div></div>`,
+      return html(baseLayout({ title: 'Profile — SoleDrop', incident, loggedIn: true, ticker: false,
+        body: `<div style="max-width:700px;margin:0 auto;padding:3rem 1.5rem;"><h1 style="font-size:1.5rem;font-weight:900;text-transform:uppercase;letter-spacing:-0.01em;color:var(--ink);margin-bottom:0.5rem;">Profile</h1><p style="color:var(--muted);margin-bottom:2rem;">Signed in as <strong style="color:var(--ink);">${esc(session.u)}</strong></p><div style="background:var(--panel);border:1px solid var(--line-soft);border-radius:14px;padding:1.5rem;box-shadow:var(--shadow-sm);"><p style="color:var(--muted);font-size:0.875rem;">Account settings, saved addresses, and payment methods.</p></div></div>`,
       }));
     }
 
@@ -881,25 +1024,43 @@ export default {
 
     // ── Public API ──────────────────────────────────────────────────────────
 
-    if (path === '/api/v1/models' && method === 'GET') {
+    if (path === '/api/v1/products' && method === 'GET') {
       return json({
         object: 'list',
-        data: [
-          { id: 'novamind-chat-v2',        object: 'model', created: 1700000000, owned_by: 'novamind', context_window: 200000, tier: 'enterprise' },
-          { id: 'novamind-chat-v2-fast',   object: 'model', created: 1710000000, owned_by: 'novamind', context_window: 32000,  tier: 'standard' },
-          { id: 'modelforge-v1-finetuned', object: 'model', created: 1715000000, owned_by: 'tenant',   context_window: 128000, tier: 'custom' },
-          { id: 'novamind-embed-v1',       object: 'model', created: 1705000000, owned_by: 'novamind', context_window: 8192,   tier: 'standard' },
-        ],
-        total: 4,
+        data: PRODUCTS.map(p => ({
+          id: p.id, name: p.name, colorway: p.colorway, price_usd: p.price,
+          status: p.state === 'soldout' ? 'sold_out' : p.state === 'raffle' ? 'raffle' : 'available',
+        })),
+        total: PRODUCTS.length,
       });
     }
 
+    // Back-compat alias — some clients/simulators still hit /api/v1/models.
+    if (path === '/api/v1/models' && method === 'GET') {
+      return json({
+        object: 'list',
+        data: PRODUCTS.map(p => ({ id: p.id, object: 'product', owned_by: 'soledrop', price_usd: p.price })),
+        total: PRODUCTS.length,
+      });
+    }
+
+    if (path === '/api/v1/customers' && method === 'GET') {
+      if (!loggedIn) return json({ error: 'Unauthorized', code: 401, message: 'Valid API key required.' }, 401);
+      return json({
+        customers: [
+          { id: 'cus_8f3a2c', email: 'hypebeast@example.com', orders: 12, heat_points: 8400, tier: 'grail' },
+          { id: 'cus_4e7b1d', email: 'sneakerfiend@example.com', orders: 3, heat_points: 620, tier: 'member' },
+        ],
+      });
+    }
+
+    // Back-compat alias for the CTF simulator's exfil target.
     if (path === '/api/v1/training-data' && method === 'GET') {
       if (!loggedIn) return json({ error: 'Unauthorized', code: 401, message: 'Valid API key required.' }, 401);
       return json({
         datasets: [
-          { id: 'ds_8f3a2c', name: 'enterprise-qa-v2',      rows: 847293, size_gb: 12.4, status: 'ready' },
-          { id: 'ds_4e7b1d', name: 'support-tickets-2024',  rows: 142000, size_gb: 3.1,  status: 'processing' },
+          { id: 'ds_8f3a2c', name: 'customer-orders-2026', rows: 847293, size_gb: 12.4, status: 'ready' },
+          { id: 'ds_4e7b1d', name: 'raffle-entries-current', rows: 142000, size_gb: 3.1, status: 'processing' },
         ],
       });
     }
@@ -908,9 +1069,9 @@ export default {
       if (!loggedIn) return json({ error: 'Unauthorized', code: 401 }, 401);
       return json({
         users: [
-          { id: 'usr_001', email: 'admin@novamind.ai',   role: 'owner' },
-          { id: 'usr_002', email: 'eng@novamind.ai',     role: 'member' },
-          { id: 'usr_003', email: 'billing@novamind.ai', role: 'billing' },
+          { id: 'usr_001', email: 'admin@soledrop.co',   role: 'owner' },
+          { id: 'usr_002', email: 'ops@soledrop.co',     role: 'member' },
+          { id: 'usr_003', email: 'billing@soledrop.co', role: 'billing' },
         ],
       });
     }
@@ -927,7 +1088,7 @@ export default {
       return json({
         id: `chatcmpl-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`,
         object: 'chat.completion',
-        model: 'novamind-chat-v2',
+        model: 'soledrop-concierge-v1',
         choices: [{ index: 0, message: { role: 'assistant', content: responseText }, finish_reason: 'stop' }],
         usage: { prompt_tokens: prompt.split(' ').length, completion_tokens: responseText.split(' ').length, total_tokens: prompt.split(' ').length + responseText.split(' ').length },
       });
@@ -959,8 +1120,8 @@ export default {
     // ── 404 ─────────────────────────────────────────────────────────────────
 
     return html(baseLayout({
-      title: '404 — NovaMind AI', incident: null, loggedIn,
-      body: `<div style="max-width:500px;margin:6rem auto;padding:0 1.5rem;text-align:center;"><div style="font-size:3rem;margin-bottom:1rem;">404</div><h1 style="font-size:1.4rem;font-weight:800;color:#fff;margin-bottom:0.5rem;">Page not found</h1><p style="color:var(--text-muted);margin-bottom:1.5rem;">The page you're looking for doesn't exist.</p><a href="/" class="btn btn-primary">Go home</a></div>`,
+      title: '404 — SoleDrop', incident: null, loggedIn, ticker: false,
+      body: `<div style="max-width:500px;margin:6rem auto;padding:0 1.5rem;text-align:center;"><div style="font-size:3rem;font-weight:900;">404</div><h1 style="font-size:1.5rem;font-weight:900;text-transform:uppercase;color:var(--ink);margin-bottom:0.5rem;">Page not found</h1><p style="color:var(--muted);margin-bottom:1.5rem;">This pair's gone. The page you're looking for doesn't exist.</p><a href="/" class="btn btn-accent">Back to the Drop</a></div>`,
     }), 404);
   },
 };
