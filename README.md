@@ -69,7 +69,7 @@ npm run deploy
 
 ### 5. Add custom domain
 
-Cloudflare dashboard → Workers & Pages → **soledrop** → Settings → Domains & Routes → Add custom domain (e.g. `soledrop.co`).
+Cloudflare dashboard → Workers & Pages → **soledrop** → Settings → Domains & Routes → Add custom domain → `shop.soledrop.co` (the apex `soledrop.co` is reserved for a separate landing page).
 
 ## Local dev
 
@@ -82,7 +82,7 @@ For secrets locally, create `.dev.vars` (git-ignored):
 
 ```
 SECRET_KEY=any-local-secret
-APP_PASSWORD=soledrop2024
+APP_PASSWORD=soledrop
 INCIDENT_KEY=your-local-test-key
 ```
 
@@ -94,7 +94,7 @@ Valid `affected_services` values (match the status page service list): `Storefro
 
 ```bash
 # Trigger incident manually (for testing):
-curl -X POST https://soledrop.co/api/incident \
+curl -X POST https://shop.soledrop.co/api/incident \
   -H "Content-Type: application/json" \
   -d '{
     "key": "your-incident-key",
@@ -106,7 +106,7 @@ curl -X POST https://soledrop.co/api/incident \
   }'
 
 # Clear incident:
-curl -X POST https://soledrop.co/api/incident \
+curl -X POST https://shop.soledrop.co/api/incident \
   -H "Content-Type: application/json" \
   -d '{"key": "your-incident-key", "active": false}'
 ```

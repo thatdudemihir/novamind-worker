@@ -692,7 +692,7 @@ function pageStatus(loggedIn) {
   <div class="services-section">
     <h3>Services</h3>
     <div id="services-list">
-      <div class="service-row"><div class="service-name">Storefront<small>soledrop.co · web &amp; mobile</small></div><div class="service-status" id="svc-store"><div class="dot dot-green"></div> Operational</div></div>
+      <div class="service-row"><div class="service-name">Storefront<small>shop.soledrop.co · web &amp; mobile</small></div><div class="service-status" id="svc-store"><div class="dot dot-green"></div> Operational</div></div>
       <div class="service-row"><div class="service-name">Checkout API<small>Cart · payments · order placement</small></div><div class="service-status" id="svc-checkout"><div class="dot dot-green"></div> Operational</div></div>
       <div class="service-row"><div class="service-name">Inventory Service<small>Stock counts · reservations · raffles</small></div><div class="service-status" id="svc-inventory"><div class="dot dot-green"></div> Operational</div></div>
       <div class="service-row"><div class="service-name">Customer Accounts<small>Login · profiles · saved payment</small></div><div class="service-status" id="svc-accounts"><div class="dot dot-green"></div> Operational</div></div>
@@ -977,7 +977,7 @@ export default {
         const username = formData.get('username') || '';
         const password = formData.get('password') || '';
         const validUser = env.APP_USERNAME || 'admin';
-        const validPass = env.APP_PASSWORD || 'soledrop2024';
+        const validPass = env.APP_PASSWORD || 'soledrop';
         if (username === validUser && password === validPass) {
           const cookie = await buildSessionCookie(username, secret);
           return new Response(null, { status: 302, headers: { Location: '/dashboard', 'Set-Cookie': cookie } });
